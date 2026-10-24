@@ -1,0 +1,9 @@
+{
+  "name": "marec-store",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pip install -r services/api/requirements-dev.txt",
+  "forwardPorts": [8000]
+}

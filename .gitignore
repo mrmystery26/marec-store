@@ -1,0 +1,28 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# node (website and launcher, later)
+node_modules/
+
+# build output
+dist/
+build/
+*.egg-info/
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/
