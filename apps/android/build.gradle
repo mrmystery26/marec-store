@@ -1,0 +1,5 @@
+// Tool versions are pinned here. Android Gradle Plugin 8.5.2 needs Gradle 8.7+ and JDK 17,
+// which the build workflow installs.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

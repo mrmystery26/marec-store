@@ -1,0 +1,37 @@
+/* Design tokens. Black, red and green are the colours of the Malawi flag; here they carry meaning:
+   red = the brand and buying, green = owned / installed / play, amber = needs attention. */
+:root {
+  --bg: #121316;
+  --surface: #191a1e;
+  --raised: #212328;
+  --raised-2: #2a2d33;
+  --line: #2f3238;
+  --line-strong: #444851;
+
+  --text: #eceef1;
+  --muted: #a3a9b3;
+  --faint: #767c87;
+
+  --accent: #e5432a;
+  --accent-hover: #f25a42;
+  --accent-soft: rgba(229, 67, 42, 0.16);
+  --owned: #3fb97a;
+  --owned-soft: rgba(63, 185, 122, 0.16);
+  --warn: #e0a63a;
+  --warn-soft: rgba(224, 166, 58, 0.16);
+  --bad: #ef6a5b;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --font-display: Bahnschrift, "Segoe UI Semibold", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  --sidebar-w: 224px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  color-scheme: dark;
+}

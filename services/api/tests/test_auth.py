@@ -5,29 +5,9 @@ import jwt
 from sqlalchemy import select
 
 from app.core.security import create_access_token
+from app.modules.audit.models import AuditLog
 from app.modules.auth.models import User
-
-EMAIL = "player@example.com"
-PASSWORD = "correct-horse-battery"
-
-
-def register(client, email=EMAIL, password=PASSWORD, name="Player One"):
-    return client.post(
-        "/v1/auth/register",
-        json={"email": email, "password": password, "display_name": name},
-    )
-
-
-def login(client, email=EMAIL, password=PASSWORD):
-    return client.post("/v1/auth/login", json={"email": email, "password": password})
-
-
-def bearer(tokens):
-    return {"Authorization": f"Bearer {tokens['access_token']}"}
-
-
-def code(response):
-    return response.json()["error"]["code"]
+from tests.helpers import EMAIL, PASSWORD, bearer, code, login, register
 
 
 def test_register_success_and_password_is_hashed(client, db_session):
@@ -200,3 +180,14 @@ def test_cannot_revoke_another_users_session(client):
     assert response.status_code == 404
     assert code(response) == "SESSION_NOT_FOUND"
     assert client.get("/v1/me", headers=bearer(other)).status_code == 200
+
+
+def test_register_writes_an_audit_record(client, db_session):
+    register(client)
+    user = db_session.scalar(select(User).where(User.email == EMAIL))
+    rows = list(db_session.scalars(select(AuditLog).where(AuditLog.action == "user.registered")))
+    assert len(rows) == 1
+    assert rows[0].actor_user_id == user.id
+    assert rows[0].entity_id == str(user.id)
+    assert rows[0].request_id
+    assert rows[0].ip

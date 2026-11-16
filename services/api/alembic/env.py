@@ -3,13 +3,20 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-import app.modules.auth.models  # noqa: F401  (registers tables on Base.metadata)
+import app.modules.audit.models  # noqa: F401  (registers tables on Base.metadata)
+import app.modules.auth.models  # noqa: F401
+import app.modules.builds.models  # noqa: F401
+import app.modules.catalog.models  # noqa: F401
+import app.modules.launch.models  # noqa: F401
+import app.modules.library.models  # noqa: F401
+import app.modules.rbac.models  # noqa: F401
+import app.modules.studios.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.db import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

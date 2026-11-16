@@ -26,3 +26,18 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+# local development file storage
+.storage/
+
+# Godot cache
+.godot/
+
+# android app (generated or secret)
+apps/android/.gradle/
+apps/android/app/build/
+apps/android/local.properties
+apps/android/app/src/main/assets/
+android-files/
+*.jks
+*.keystore

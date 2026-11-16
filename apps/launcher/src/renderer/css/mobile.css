@@ -1,0 +1,95 @@
+/* Phone and small-tablet layout. Below 840px the sidebar becomes a bottom tab bar. The Windows
+   window never gets this narrow (minimum 900px), so it only shows on Android. */
+.bottom-nav, .top-brand, .profile-menu { display: none; }
+body { overscroll-behavior: none; }
+
+/* No hover on touch screens: show the wishlist heart and skip the lift effect. */
+@media (hover: none) {
+  .wish { opacity: 1; }
+  .card-hit:hover .card-art { transform: none; box-shadow: none; }
+}
+
+.search-box.big { width: 100%; height: 44px; margin-bottom: 18px; }
+.pad-sm { margin-bottom: 14px; }
+
+@media (max-width: 840px) {
+  .sidebar, .desktop-only { display: none !important; }
+  .top-brand { display: flex; align-items: center; gap: 8px; margin-left: 4px; }
+  .top-brand .brand-text { display: inline; font: 600 14px var(--font-display); letter-spacing: 0.1em; }
+  .top-brand .brand-text b { color: var(--accent); font-weight: 600; margin-left: 4px; }
+  .top-brand .brand-mark { width: 26px; height: 26px; font-size: 15px; }
+
+  .bottom-nav { display: grid; grid-template-columns: repeat(5, 1fr); flex: none; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; height: 60px; padding: 0; background: none; border: 0; color: var(--faint); font-size: 11px; }
+  .tab.on { color: var(--text); }
+  .tab.on::before { content: ""; position: absolute; top: 0; left: 30%; right: 30%; height: 3px; border-radius: 0 0 3px 3px; background: var(--accent); }
+  .tab .nav-badge.on { position: absolute; top: 6px; left: calc(50% + 6px); min-width: 16px; line-height: 16px; font-size: 10px; padding: 0 4px; }
+
+  .page { padding: 16px 16px 28px; }
+  h1 { font-size: 22px; }
+  .page-head { margin-bottom: 14px; }
+  .btn { min-height: 44px; }
+  input, select { min-height: 44px; }
+  .topbar { padding: 0 8px; }
+  .top-actions .icon-btn { width: 40px; height: 40px; }
+
+  .card-grid, .card-grid.compact { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px 12px; }
+  .shelf { margin-top: 28px; }
+  .shelf-row { grid-auto-columns: 148px; gap: 12px; }
+  .shelf-arrows { display: none; }
+
+  .hero { grid-template-columns: 1fr; grid-template-rows: 1fr auto; height: 440px; }
+  .hero-rail { grid-column: 1; flex-direction: row; overflow-x: auto; border-left: 0; border-top: 1px solid var(--line); }
+  .hero-rail button { flex: 0 0 150px; border-bottom: 0; border-right: 1px solid var(--line); padding: 10px 14px; min-height: 64px; }
+  .hero-copy { left: 18px; right: 18px; bottom: 18px; }
+  .hero-title { font-size: 30px; }
+  .hero-summary { font-size: 14px; }
+
+  .tabs { overflow-x: auto; }
+  .tabs button { flex: none; }
+  .store-layout { gap: 16px; }
+  .filters { flex-direction: column; gap: 14px; }
+  .filter-list { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+  .filter-item { flex: none; height: 36px; border: 1px solid var(--line); border-radius: 18px; padding: 0 14px; }
+  .filter-item.on { box-shadow: none; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+  .filters select { width: 100%; }
+  .results-bar { flex-wrap: wrap; }
+
+  .game-head { height: 220px; }
+  .game-head-copy { left: 16px; right: 16px; bottom: 14px; }
+  .game-head .art-mark { font-size: 96px; }
+  .game-layout { margin-top: 20px; gap: 20px; }
+
+  .page.library.with-drawer { display: block; }
+  .drawer { position: fixed; inset: 0; z-index: 25; overflow-y: auto; border-radius: 0; border: 0; animation: slide-up 0.2s var(--ease); }
+  @keyframes slide-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+  .toolbar .search-box { width: 100%; }
+  .lib-row .row-hit { flex-wrap: wrap; }
+  .row-status { width: 100%; }
+  .lib-row { flex-wrap: wrap; }
+  .dl-row, .wish-row { flex-wrap: wrap; }
+  .wish-price { width: auto; }
+  .history-row { flex-wrap: wrap; gap: 8px 12px; }
+  .history-row .muted { width: auto; text-align: left; }
+
+  .profile-menu { display: flex; flex-direction: column; margin-bottom: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+  .menu-item { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px; background: none; border: 0; border-bottom: 1px solid var(--line); color: var(--text); text-align: left; }
+  .menu-item:last-child { border-bottom: 0; }
+  .menu-item span { flex: 1; }
+  .menu-item svg:last-child { color: var(--faint); }
+  .stats { gap: 8px; }
+  .stat { padding: 14px; }
+  .stat strong { font-size: 24px; }
+
+  .settings-layout { gap: 16px; }
+  .settings-nav { overflow-x: auto; flex-wrap: nowrap; }
+  .settings-nav button { flex: none; }
+  .setting { flex-wrap: wrap; gap: 10px; }
+  .setting select { width: 100%; }
+
+  .popover { left: 8px; right: 8px; width: auto; }
+  .modal-backdrop { padding: 12px; align-items: end; }
+  .modal-actions { flex-wrap: wrap; }
+  .toast { left: 12px; right: 12px; bottom: 76px; max-width: none; }
+  .banner.on { padding: 8px 12px; font-size: 12px; }
+}

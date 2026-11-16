@@ -1,0 +1,10 @@
+; Engine configuration file.
+; This project exists to run the SDK's tests. To use the SDK in your own game, copy
+; addons/marec_sdk into your project and follow README.md.
+
+config_version=5
+
+[application]
+
+config/name="MAREC SDK (tests)"
+config/features=PackedStringArray("4.7")

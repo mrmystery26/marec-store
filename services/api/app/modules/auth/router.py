@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.modules.audit import service as audit
 from app.modules.auth import service
 from app.modules.auth.deps import AuthContext, get_auth_context
 from app.modules.auth.models import User
@@ -39,8 +40,16 @@ def _to_token_response(tokens: service.TokenPair) -> TokenResponse:
 
 
 @router.post("/auth/register", status_code=201, response_model=UserOut)
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserOut:
-    user = service.register_user(db, body.email, body.password, body.display_name)
+def register(
+    body: RegisterRequest, request: Request, db: Session = Depends(get_db)
+) -> UserOut:
+    user = service.register_user(
+        db,
+        body.email,
+        body.password,
+        body.display_name,
+        **audit.context_from_request(request),
+    )
     return _to_user_out(user)
 
 

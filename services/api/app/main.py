@@ -6,7 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.modules.admin.review import router as admin_review_router
+from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
+from app.modules.builds.router import router as builds_router
+from app.modules.builds.storage_router import router as storage_router
+from app.modules.catalog.public_router import router as store_router
+from app.modules.developer.router import router as developer_router
+from app.modules.launch.router import router as launch_router
+from app.modules.library.router import router as library_router
 from app.modules.health import router as health_router
 
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
@@ -46,13 +54,23 @@ def create_app() -> FastAPI:
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path.startswith(("/v1/auth", "/v1/me")):
+        path = request.url.path
+        no_store = ("/v1/auth", "/v1/me", "/v1/admin", "/v1/developer", "/v1/launch/")
+        if path.startswith(no_store) or path.endswith("/install-plan"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
     register_error_handlers(app)
     app.include_router(health_router, prefix="/v1")
     app.include_router(auth_router, prefix="/v1")
+    app.include_router(admin_router, prefix="/v1")
+    app.include_router(admin_review_router, prefix="/v1")
+    app.include_router(store_router, prefix="/v1")
+    app.include_router(developer_router, prefix="/v1")
+    app.include_router(builds_router, prefix="/v1")
+    app.include_router(storage_router, prefix="/v1")
+    app.include_router(library_router, prefix="/v1")
+    app.include_router(launch_router, prefix="/v1")
     return app
 
 

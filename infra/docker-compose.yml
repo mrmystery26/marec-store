@@ -24,6 +24,9 @@ services:
       ENVIRONMENT: local
       DATABASE_URL: postgresql+psycopg://marec:marec_local_dev_only@db:5432/marec
       JWT_SECRET: ${JWT_SECRET:-change-me-local-dev-only-0123456789abcdef}
+      # Address that upload and download links point at. In Codespaces use the forwarded address
+      # of port 8000, and make that port Public so the launcher on your PC can reach it.
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:8000}
     volumes:
       - ../services/api:/app
     ports:

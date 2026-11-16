@@ -18,6 +18,7 @@ from app.core.security import (
     password_needs_rehash,
     verify_password,
 )
+from app.modules.audit import service as audit
 from app.modules.auth.models import User, UserSession
 
 INVALID_CREDENTIALS = ApiError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
@@ -38,13 +39,34 @@ def _invalid_refresh() -> ApiError:
     return ApiError(401, "INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired.")
 
 
-def register_user(db: Session, email: str, password: str, display_name: str) -> User:
+def register_user(
+    db: Session,
+    email: str,
+    password: str,
+    display_name: str,
+    ip: str | None = None,
+    request_id: str | None = None,
+) -> User:
     email = normalize_email(email)
     taken = ApiError(409, "EMAIL_TAKEN", "An account with this email already exists.")
     if db.scalar(select(User.id).where(User.email == email)) is not None:
         raise taken
-    user = User(email=email, password_hash=hash_password(password), display_name=display_name)
+    user = User(
+        id=uuid.uuid4(),
+        email=email,
+        password_hash=hash_password(password),
+        display_name=display_name,
+    )
     db.add(user)
+    audit.record(
+        db,
+        action="user.registered",
+        entity_type="user",
+        entity_id=str(user.id),
+        actor_user_id=user.id,
+        ip=ip,
+        request_id=request_id,
+    )
     try:
         db.commit()
     except IntegrityError:

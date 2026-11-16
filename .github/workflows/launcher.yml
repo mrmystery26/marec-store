@@ -1,0 +1,36 @@
+name: Launcher
+
+on:
+  push:
+    paths:
+      - "apps/launcher/**"
+      - "tools/**"
+      - ".github/workflows/launcher.yml"
+  pull_request:
+    paths:
+      - "apps/launcher/**"
+      - "tools/**"
+      - ".github/workflows/launcher.yml"
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # The Windows run shows how the launcher behaves on real Windows paths and pipes.
+    # It is reported but does not fail the check, because the prototype is new.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Launcher tests
+        working-directory: apps/launcher
+        run: node --test --test-timeout=60000 "tests/*.test.js"
+      - name: Upload tool tests
+        working-directory: tools/upload-build
+        run: node --test --test-timeout=60000 upload-build.test.js

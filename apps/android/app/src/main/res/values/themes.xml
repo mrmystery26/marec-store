@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MarecStore" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/marec_bg</item>
+        <item name="android:statusBarColor">@color/marec_bg</item>
+        <item name="android:navigationBarColor">@color/marec_bg</item>
+        <item name="android:colorPrimary">@color/ic_launcher_background</item>
+    </style>
+</resources>

@@ -1,0 +1,511 @@
+name: Build apps
+
+# Builds both MAREC Store apps with no manual steps:
+#   - Windows launcher: installer (MarecStore-Setup.exe), standalone MarecStore.exe, MarecStore-Windows.zip
+#   - Android app: debug APK, and (when signing secrets exist) release APK and AAB
+# Triggers: every push to main, a version tag such as v0.2.0 (also publishes a GitHub Release),
+# or "Run workflow" in the Actions tab, where you can pick Windows, Android or both.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "What to build"
+        type: choice
+        options: [both, windows, android]
+        default: both
+      android_release:
+        description: "Android: also build the signed release APK and AAB (needs the signing secrets)"
+        type: boolean
+        default: false
+      emulator_test:
+        description: "Android: also open the app in an emulator and check that it starts (slower)"
+        type: boolean
+        default: false
+      commit_lockfile:
+        description: "Create and commit apps/launcher/package-lock.json if it does not exist yet"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apps-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  NODE_VERSION: "22"
+  JAVA_VERSION: "17"
+  GRADLE_VERSION: "8.7"
+  ANDROID_API: "34"
+  ANDROID_BUILD_TOOLS: "34.0.0"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false" # the Windows installer is not code-signed yet
+  # The Android application ID. Set the repository variable ANDROID_APPLICATION_ID to change it.
+  ANDROID_APPLICATION_ID: ${{ vars.ANDROID_APPLICATION_ID || 'com.marecstudios.store' }}
+
+jobs:
+  # ------------------------------------------------------------------ what to build, and the version
+  info:
+    name: Plan the build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      build: ${{ steps.info.outputs.build }}
+      version_code: ${{ steps.info.outputs.versionCode }}
+      commit: ${{ steps.info.outputs.commit }}
+      date: ${{ steps.info.outputs.date }}
+      suffix: ${{ steps.info.outputs.suffix }}
+      prerelease: ${{ steps.info.outputs.prerelease }}
+      windows: ${{ steps.plan.outputs.windows }}
+      android: ${{ steps.plan.outputs.android }}
+      release_mode: ${{ steps.plan.outputs.release_mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Work out the version
+        id: info
+        run: node scripts/ci/build-info.js
+      - name: Decide what to build
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          PLATFORM: ${{ inputs.platform }}
+          ANDROID_RELEASE: ${{ inputs.android_release }}
+        run: |
+          WINDOWS=true; ANDROID=true
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            [ "$PLATFORM" = "android" ] && WINDOWS=false
+            [ "$PLATFORM" = "windows" ] && ANDROID=false
+          fi
+          # required: fail if the signing secrets are missing; auto: build release only if they exist; no: debug only
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then MODE=required
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$ANDROID_RELEASE" = "true" ]; then MODE=required; else MODE=no; fi
+          else MODE=auto; fi
+          { echo "windows=$WINDOWS"; echo "android=$ANDROID"; echo "release_mode=$MODE"; } >> "$GITHUB_OUTPUT"
+          echo "Windows: $WINDOWS, Android: $ANDROID, Android release: $MODE"
+
+  # ------------------------------------------------------------------ Windows
+  windows:
+    name: Windows launcher
+    needs: info
+    if: needs.info.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.info.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Stamp the build with its version, build number, commit and date
+        env:
+          BUILD_DATE: ${{ needs.info.outputs.date }}
+        run: node scripts/ci/build-info.js --write-renderer
+
+      - name: Point the app at the store
+        env:
+          MAREC_API_BASE_URL: ${{ vars.MAREC_API_BASE_URL }}
+        run: node scripts/ci/apply-api-base.js
+
+      - name: Detect the package manager
+        id: pm
+        working-directory: apps/launcher
+        run: |
+          if   [ -f pnpm-lock.yaml ];    then MANAGER=pnpm; LOCKED=true
+          elif [ -f yarn.lock ];         then MANAGER=yarn; LOCKED=true
+          elif [ -f package-lock.json ]; then MANAGER=npm;  LOCKED=true
+          else                                MANAGER=npm;  LOCKED=false
+          fi
+          echo "manager=$MANAGER" >> "$GITHUB_OUTPUT"
+          echo "locked=$LOCKED" >> "$GITHUB_OUTPUT"
+          echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+          echo "Using $MANAGER (lockfile present: $LOCKED)"
+
+      - name: Cache downloaded packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pm.outputs.dir }}
+          key: npm-${{ runner.os }}-${{ hashFiles('apps/launcher/package.json', 'apps/launcher/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Cache Electron and installer tooling
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/launcher/package.json', 'apps/launcher/package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: apps/launcher
+        run: |
+          case "${{ steps.pm.outputs.manager }}" in
+            pnpm) corepack enable; pnpm install --frozen-lockfile ;;
+            yarn) corepack enable; yarn install --frozen-lockfile ;;
+            npm)
+              if [ "${{ steps.pm.outputs.locked }}" = "true" ]; then
+                npm ci
+              else
+                echo "::warning::There is no package-lock.json, so package versions are not pinned. Run this workflow once with 'commit_lockfile' ticked to add one."
+                npm install
+              fi ;;
+          esac
+
+      - name: Run the tests
+        # Tests must pass for a release tag. For ordinary builds they are reported but do not stop the
+        # installer from being built, so one Windows-only test failure cannot block you.
+        continue-on-error: ${{ github.ref_type != 'tag' }}
+        working-directory: apps/launcher
+        run: npm test
+
+      - name: Build the installer and the standalone exe
+        working-directory: apps/launcher
+        env:
+          ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+          ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+        run: npm run dist -- "-c.extraMetadata.version=$VERSION" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Zip the app with its supporting files
+        shell: pwsh
+        working-directory: apps/launcher
+        run: |
+          if (-not (Test-Path dist/win-unpacked)) { throw "dist/win-unpacked was not produced" }
+          Compress-Archive -Path dist/win-unpacked/* -DestinationPath dist/MarecStore-Windows.zip -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path dist/MarecStore-Windows.zip))
+          $names = $zip.Entries | ForEach-Object { $_.FullName }
+          $zip.Dispose()
+          foreach ($needed in @('resources/app.asar', 'resources.pak', 'icudtl.dat')) {
+            if (-not ($names | Where-Object { $_ -replace '\\','/' -like "*$needed" })) { throw "MarecStore-Windows.zip is missing $needed" }
+          }
+          if (-not ($names | Where-Object { $_ -like '*.exe' })) { throw "MarecStore-Windows.zip has no .exe" }
+          Write-Host "The zip holds $($names.Count) files, including the app, its resources and the Electron runtime."
+
+      - name: Check the build output
+        working-directory: apps/launcher
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          for f in dist/MarecStore-Setup.exe dist/MarecStore.exe; do
+            [ -f "$f" ] || fail "$f was not produced."
+            size=$(stat -c %s "$f")
+            [ "$size" -gt 20000000 ] || fail "$f is only $size bytes, which is too small to be a complete Electron app."
+            [ "$(head -c 2 "$f")" = "MZ" ] || fail "$f is not a Windows executable."
+          done
+          [ "$(stat -c %s dist/MarecStore-Windows.zip)" -gt 20000000 ] || fail "MarecStore-Windows.zip is too small."
+          (cd dist && sha256sum MarecStore-Setup.exe MarecStore.exe MarecStore-Windows.zip > SHA256SUMS.txt)
+          {
+            echo "## MAREC Store $VERSION for Windows (build ${{ needs.info.outputs.build }}, ${{ needs.info.outputs.commit }})"
+            echo
+            echo "| File | Size |"
+            echo "| --- | --- |"
+            for f in dist/MarecStore-Setup.exe dist/MarecStore.exe dist/MarecStore-Windows.zip; do
+              echo "| \`$(basename "$f")\` | $(( $(stat -c %s "$f") / 1048576 )) MB |"
+            done
+            echo
+            echo "Download the artifact **MarecStore-Windows-${{ needs.info.outputs.suffix }}** at the bottom of this page."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start the app once (reported, does not fail the build)
+        continue-on-error: true
+        shell: pwsh
+        working-directory: apps/launcher
+        run: |
+          $exe = Get-ChildItem dist/win-unpacked -Filter *.exe | Where-Object { $_.Name -notmatch 'Uninstall|elevate' } | Select-Object -First 1
+          $process = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 12
+          if ($process.HasExited) {
+            Write-Host "::warning::The app closed by itself within 12 seconds (exit code $($process.ExitCode)). This can be normal on a runner without a display, but check it on a real PC."
+            exit 1
+          }
+          Write-Host "The app was still running after 12 seconds."
+          taskkill /PID $process.Id /T /F | Out-Null
+
+      - name: Upload the Windows files
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarecStore-Windows-${{ needs.info.outputs.suffix }}
+          path: |
+            apps/launcher/dist/MarecStore-Setup.exe
+            apps/launcher/dist/MarecStore.exe
+            apps/launcher/dist/MarecStore-Windows.zip
+            apps/launcher/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarecStore-Windows-build-logs-${{ github.run_number }}
+          path: |
+            build.log
+            ${{ steps.pm.outputs.dir }}/_logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ------------------------------------------------------------------ Android
+  android:
+    name: Android app
+    needs: info
+    if: needs.info.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.info.outputs.version }}
+      RELEASE_MODE: ${{ needs.info.outputs.release_mode }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Stamp the build with its version, build number, commit and date
+        env:
+          BUILD_DATE: ${{ needs.info.outputs.date }}
+        run: node scripts/ci/build-info.js --write-renderer
+
+      - name: Run the app's JavaScript tests
+        working-directory: apps/launcher
+        run: npm test
+
+      - name: Copy the shared store interface into the Android app
+        run: node scripts/android/prepare-assets.js
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-${{ env.ANDROID_API }} build-tools;${{ env.ANDROID_BUILD_TOOLS }}"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Decide whether to build the release files
+        id: release
+        # The signing secrets are only given to this step and to the build step below.
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          MISSING=""
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [ -n "${!name}" ] || MISSING="$MISSING $name"
+          done
+          BUILD=false
+          if [ -z "$MISSING" ]; then
+            [ "$RELEASE_MODE" != "no" ] && BUILD=true
+          elif [ "$RELEASE_MODE" = "required" ]; then
+            echo "::error::A signed release build was requested, but these GitHub secrets are missing:$MISSING. See docs/ANDROID_SIGNING.md."
+            exit 1
+          elif [ "$RELEASE_MODE" = "auto" ]; then
+            echo "::notice::No signing secrets are set, so only the debug APK is built. See docs/ANDROID_SIGNING.md to enable release builds."
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          if [ "$BUILD" = "true" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/marec-release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/marec-release.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build the Android app
+        env:
+          MAREC_API_BASE_URL: ${{ vars.MAREC_API_BASE_URL }}
+          BUILD_NUMBER: ${{ needs.info.outputs.version_code }}
+          COMMIT: ${{ needs.info.outputs.commit }}
+          BUILD_DATE: ${{ needs.info.outputs.date }}
+          BUILD_RELEASE: ${{ steps.release.outputs.build }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          [ -n "$MAREC_API_BASE_URL" ] || echo "::warning::The repository variable MAREC_API_BASE_URL is not set, so the app asks for a server address on first start. See docs/GITHUB_ACTIONS.md."
+          TASKS=(testDebugUnitTest assembleDebug)
+          [ "$BUILD_RELEASE" = "true" ] && TASKS+=(assembleRelease bundleRelease)
+          gradle -p apps/android "${TASKS[@]}" --stacktrace \
+            -PmarecVersionName="$VERSION" -PmarecVersionCode="$BUILD_NUMBER" -PmarecCommit="$COMMIT" \
+            -PmarecBuildDate="$BUILD_DATE" -PmarecApplicationId="$ANDROID_APPLICATION_ID" -PmarecApiBase="$MAREC_API_BASE_URL" \
+            2>&1 | tee build.log
+
+      - name: Check the APKs and the bundle
+        env:
+          BUILD_NUMBER: ${{ needs.info.outputs.version_code }}
+          BUILD_RELEASE: ${{ steps.release.outputs.build }}
+        run: |
+          OUT=apps/android/app/build/outputs
+          check() { node scripts/ci/check-apk.js --file "$1" --package "$2" --version "$VERSION" --code "$BUILD_NUMBER" --min-sdk 24 "${@:3}"; }
+          check "$OUT/apk/debug/app-debug.apk" "$ANDROID_APPLICATION_ID.debug"
+          if [ "$BUILD_RELEASE" = "true" ]; then
+            check "$OUT/apk/release/app-release.apk" "$ANDROID_APPLICATION_ID" --release
+            node scripts/ci/check-apk.js --file "$OUT/bundle/release/app-release.aab"
+          fi
+
+      - name: Collect the Android files
+        env:
+          BUILD_RELEASE: ${{ steps.release.outputs.build }}
+        run: |
+          OUT=apps/android/app/build/outputs
+          mkdir -p android-files
+          cp "$OUT/apk/debug/app-debug.apk" android-files/MarecStore-Android-debug.apk
+          if [ "$BUILD_RELEASE" = "true" ]; then
+            cp "$OUT/apk/release/app-release.apk" android-files/MarecStore-Android-release.apk
+            cp "$OUT/bundle/release/app-release.aab" android-files/MarecStore-Android-release.aab
+          fi
+          (cd android-files && sha256sum * > SHA256SUMS.txt)
+          {
+            echo "## MAREC Store $VERSION for Android (build ${{ needs.info.outputs.build }}, ${{ needs.info.outputs.commit }})"
+            echo
+            echo "| File | Size |"
+            echo "| --- | --- |"
+            for f in android-files/*.apk android-files/*.aab; do
+              [ -f "$f" ] && echo "| \`$(basename "$f")\` | $(( $(stat -c %s "$f") / 1024 )) KB |"
+            done
+            echo
+            [ "$BUILD_RELEASE" = "true" ] || echo "Only the debug APK was built (no release signing in this run)."
+            echo "Download the artifact **MarecStore-Android-${{ needs.info.outputs.suffix }}** at the bottom of this page."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the Android files
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarecStore-Android-${{ needs.info.outputs.suffix }}
+          path: android-files/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove the signing key from this runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/marec-release.jks"
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarecStore-Android-build-logs-${{ github.run_number }}
+          path: |
+            build.log
+            apps/android/app/build/reports
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ------------------------------------------------------------------ optional: open the app in an emulator
+  android-emulator:
+    name: Android emulator check
+    needs: [info, android]
+    if: github.event_name == 'workflow_dispatch' && inputs.emulator_test && needs.info.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: MarecStore-Android-${{ needs.info.outputs.suffix }}
+          path: android-files
+      - name: Enable hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start the app in an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          script: bash scripts/android/emulator-smoke.sh android-files/MarecStore-Android-debug.apk ${{ env.ANDROID_APPLICATION_ID }}.debug emulator-screenshot.png
+      - name: Upload the emulator screenshot and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarecStore-Android-emulator-${{ github.run_number }}
+          path: |
+            emulator-screenshot.png
+            emulator-logcat.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ------------------------------------------------------------------ version tags publish a GitHub Release
+  release:
+    name: Publish GitHub Release
+    needs: [info, windows, android]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # lets this job create the release and attach files
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.info.outputs.version }}
+      PRERELEASE: ${{ needs.info.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MarecStore-Windows-${{ needs.info.outputs.suffix }}
+          path: release-files
+      - uses: actions/download-artifact@v4
+        with:
+          name: MarecStore-Android-${{ needs.info.outputs.suffix }}
+          path: release-files
+      - name: Create or update the release
+        run: |
+          cd release-files
+          rm -f MarecStore-Android-debug.apk # debug builds are for testing, not for the release page
+          # one checksum list for everything on the release page (replaces the per-platform lists)
+          sha256sum MarecStore-Setup.exe MarecStore.exe MarecStore-Windows.zip MarecStore-Android-release.apk MarecStore-Android-release.aab > SHA256SUMS.txt
+          FILES=(MarecStore-Setup.exe MarecStore.exe MarecStore-Windows.zip MarecStore-Android-release.apk MarecStore-Android-release.aab SHA256SUMS.txt)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A release for this tag already exists (for example one you created on GitHub): add the files to it.
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            FLAGS=()
+            [ "$PRERELEASE" = "true" ] && FLAGS+=(--prerelease)
+            gh release create "$TAG" "${FILES[@]}" --title "MAREC Store $VERSION" --generate-notes --verify-tag "${FLAGS[@]}"
+          fi
+
+  # ------------------------------------------------------------------ one-time helper
+  lockfile:
+    name: Add package-lock.json (on request)
+    if: github.event_name == 'workflow_dispatch' && inputs.commit_lockfile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # lets this job commit the lockfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Create and commit the lockfile
+        working-directory: apps/launcher
+        run: |
+          if [ -f package-lock.json ] || [ -f yarn.lock ] || [ -f pnpm-lock.yaml ]; then
+            echo "A lockfile already exists. Nothing to do."
+            exit 0
+          fi
+          npm install --package-lock-only --ignore-scripts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "Add launcher package-lock.json so builds use fixed package versions"
+          git push

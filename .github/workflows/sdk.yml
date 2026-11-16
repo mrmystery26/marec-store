@@ -1,0 +1,36 @@
+name: Godot SDK
+
+on:
+  push:
+    paths:
+      - "packages/marec-sdk-godot/**"
+      - ".github/workflows/sdk.yml"
+  pull_request:
+    paths:
+      - "packages/marec-sdk-godot/**"
+      - ".github/workflows/sdk.yml"
+
+jobs:
+  vectors:
+    name: Token vectors (reference check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test packages/marec-sdk-godot/tests/vectors.test.js
+
+  godot:
+    name: SDK tests in Godot 4.7.2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.7.2
+          use-dotnet: false
+      - name: Import the project
+        run: godot --headless --path packages/marec-sdk-godot --import || true
+      - name: Run the SDK tests
+        run: godot --headless --path packages/marec-sdk-godot --script res://tests/run_tests.gd

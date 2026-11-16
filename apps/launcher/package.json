@@ -1,0 +1,54 @@
+{
+  "name": "marec-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MAREC STORE launcher for Windows",
+  "author": "MAREC STUDIOS",
+  "main": "src/main/main.js",
+  "scripts": {
+    "test": "node --test --test-timeout=60000 \"tests/*.test.js\"",
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.marecstudios.store.launcher",
+    "productName": "MAREC Store",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "launcher.config.json",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "MarecStore-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MarecStore.${ext}"
+    }
+  }
+}

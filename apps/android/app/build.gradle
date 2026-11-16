@@ -1,0 +1,88 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Everything the build pipeline decides is passed in as -P properties, so the version is the same
+// on Windows and Android (see scripts/ci/build-info.js). Defaults make a local build work too.
+def prop = { String name, String fallback ->
+    project.hasProperty(name) ? project.property(name).toString().replace('"', '') : fallback
+}
+
+def marecVersionName = prop('marecVersionName', '0.0.0-dev')
+def marecVersionCode = prop('marecVersionCode', '1').toInteger()
+def marecApplicationId = prop('marecApplicationId', 'com.marecstudios.store') // keep this stable once published
+
+// Release signing comes from environment variables (filled from GitHub Secrets by the workflow).
+def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseRequested && !keystorePath) {
+    throw new GradleException(
+        'Release signing is not set up. Add the ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ' +
+        'ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD secrets (see docs/ANDROID_SIGNING.md).')
+}
+
+android {
+    namespace 'com.marecstudios.store'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId marecApplicationId
+        minSdk 24
+        targetSdk 34
+        versionCode marecVersionCode
+        versionName marecVersionName
+
+        buildConfigField 'String', 'BUILD_COMMIT', "\"${prop('marecCommit', 'local')}\""
+        buildConfigField 'String', 'BUILD_DATE', "\"${prop('marecBuildDate', '')}\""
+        // The store the app talks to until the player changes it in Settings. Empty = ask the player.
+        buildConfigField 'String', 'DEFAULT_API_BASE', "\"${prop('marecApiBase', '')}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Installs next to the release app instead of replacing it, and may use http:// test servers.
+            applicationIdSuffix '.debug'
+            buildConfigField 'boolean', 'ALLOW_CLEARTEXT', 'true'
+            manifestPlaceholders = [usesCleartextTraffic: 'true', appLabel: 'MAREC Store (debug)']
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+            buildConfigField 'boolean', 'ALLOW_CLEARTEXT', 'false'
+            manifestPlaceholders = [usesCleartextTraffic: 'false', appLabel: 'MAREC Store']
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'androidx.security:security-crypto:1.0.0'
+
+    testImplementation 'junit:junit:4.13.2'
+}

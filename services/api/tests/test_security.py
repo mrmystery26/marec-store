@@ -1,3 +1,4 @@
+import base64
 import hashlib
 
 import pytest
@@ -43,11 +44,52 @@ def test_production_rejects_weak_jwt_secret():
         )
 
 
-def test_production_accepts_strong_jwt_secret():
-    settings = Settings(
-        _env_file=None,
-        environment="production",
-        database_url="postgresql+psycopg://user:pw@host/db",
-        jwt_secret="x" * 40,
-    )
-    assert settings.environment == "production"
+PRODUCTION = {
+    "_env_file": None,
+    "environment": "production",
+    "database_url": "postgresql+psycopg://user:pw@host/db",
+    "jwt_secret": "x" * 40,
+    "manifest_signing_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "launch_signing_key": base64.b64encode(b"-----BEGIN PRIVATE KEY-----\nabc").decode(),
+    "storage_backend": "s3",
+    "s3_endpoint_url": "https://example.r2.cloudflarestorage.com",
+    "s3_bucket": "builds",
+    "s3_access_key_id": "key",
+    "s3_secret_access_key": "secret",
+}
+
+
+def test_production_accepts_a_complete_configuration():
+    assert Settings(**PRODUCTION).environment == "production"
+
+
+def test_production_requires_a_signing_key():
+    with pytest.raises(ValidationError):
+        Settings(**{**PRODUCTION, "manifest_signing_key": None})
+
+
+def test_production_requires_a_launch_signing_key():
+    with pytest.raises(ValidationError):
+        Settings(**{**PRODUCTION, "launch_signing_key": None})
+
+
+def test_launch_signing_key_must_be_a_base64_pem():
+    for bad in ("not base64!!", base64.b64encode(b"just text").decode()):
+        with pytest.raises(ValidationError):
+            Settings(**{**PRODUCTION, "launch_signing_key": bad})
+
+
+def test_production_requires_s3_storage():
+    with pytest.raises(ValidationError):
+        Settings(**{**PRODUCTION, "storage_backend": "local"})
+
+
+def test_s3_backend_needs_its_settings():
+    with pytest.raises(ValidationError):
+        Settings(**{**PRODUCTION, "s3_bucket": None})
+
+
+def test_signing_key_must_be_32_bytes_of_base64():
+    for bad in ("not base64!!", "AAEC"):
+        with pytest.raises(ValidationError):
+            Settings(**{**PRODUCTION, "manifest_signing_key": bad})
