@@ -86,6 +86,16 @@ test("a correct APK passes every check", () => {
   assert.deepEqual(checkApk(parsed, EXPECTED, GOOD_SIGNATURE), []);
 });
 
+test("aapt2 prints the minimum Android version as minSdkVersion, and that is read correctly", () => {
+  // Real aapt2 (Android build-tools) output; the older aapt used sdkVersion instead (see BADGING above).
+  const aapt2 = BADGING.replace("sdkVersion:'24'", "minSdkVersion:'24'");
+  const parsed = parseBadging(aapt2);
+  assert.deepEqual([parsed.minSdk, parsed.targetSdk], ["24", "34"]);
+  assert.deepEqual(checkApk(parsed, EXPECTED, GOOD_SIGNATURE), []);
+  const tooLow = checkApk(parseBadging(aapt2.replace("minSdkVersion:'24'", "minSdkVersion:'21'")), EXPECTED, GOOD_SIGNATURE);
+  assert.ok(tooLow.some((p) => p.includes("minimum Android")));
+});
+
 test("wrong id, version, minimum Android, permissions or signing are all reported", () => {
   const bad = BADGING.replace("com.marecstudios.store' versionCode='42'", "com.other.app' versionCode='1'").replace("sdkVersion:'24'", "sdkVersion:'21'")
     + "uses-permission: name='android.permission.READ_CONTACTS'\n";

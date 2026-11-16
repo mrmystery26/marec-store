@@ -16,7 +16,8 @@ function parseBadging(text) {
     package: grab(/^package: name='([^']+)'/m),
     versionCode: grab(/^package:.* versionCode='([^']+)'/m),
     versionName: grab(/^package:.* versionName='([^']*)'/m),
-    minSdk: grab(/^sdkVersion:'(\d+)'/m),
+    // aapt2 prints minSdkVersion:'N'; the older aapt printed sdkVersion:'N'. Accept both.
+    minSdk: grab(/^(?:minSdkVersion|sdkVersion):'(\d+)'/m),
     targetSdk: grab(/^targetSdkVersion:'(\d+)'/m),
     permissions: [...text.matchAll(/^uses-permission(?:-sdk-\d+)?: name='([^']+)'/gm)].map((m) => m[1]),
     launchable: /^launchable-activity: name='/m.test(text),
