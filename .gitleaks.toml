@@ -1,0 +1,17 @@
+# Gitleaks configuration for MAREC Store. Picked up automatically by the CI secret-scan job.
+# All default rules stay on. Only the two files below are skipped, because they contain
+# deliberately fake values:
+#   - vectors.json: RS256 test tokens signed with throwaway keys that are generated in memory by
+#     tests/make-fixtures.js and never saved (the file holds tokens and a public key only).
+#   - test_security.py: a made-up settings dictionary used to test production start-up checks.
+title = "MAREC Store gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures with throwaway keys and fake settings"
+paths = [
+  '''packages/marec-sdk-godot/tests/fixtures/vectors\.json''',
+  '''services/api/tests/test_security\.py''',
+]
