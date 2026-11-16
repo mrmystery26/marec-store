@@ -1,0 +1,36 @@
+# Render Blueprint: hosts the MAREC STORE API and its PostgreSQL database.
+# Step-by-step (works from a phone browser): docs/DEPLOY_RENDER.md
+#
+# This is DEMO mode (ENVIRONMENT=local): builds are kept on temporary disk, no signing keys are
+# set, and the demo games are loaded. Do not put real customer data or real game builds here.
+# For a real launch, see "Going to production" in docs/DEPLOY_RENDER.md.
+databases:
+  - name: marec-db
+    databaseName: marec
+    user: marec
+    plan: free
+
+services:
+  - type: web
+    name: marec-store-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./services/api/Dockerfile
+    dockerContext: ./services/api
+    dockerCommand: sh start_hosted.sh
+    healthCheckPath: /v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: local
+      - key: DATABASE_URL
+        fromDatabase:
+          name: marec-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: STORAGE_BACKEND
+        value: local
+      - key: STORAGE_LOCAL_DIR
+        value: /tmp/marec-storage
+      - key: SEED_DEMO
+        value: "true"
