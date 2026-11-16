@@ -3,7 +3,7 @@ import binascii
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     launch_signing_key: SecretStr | None = None
     launch_token_seconds: int = 120
     max_devices_per_account: int = 5
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, value: str) -> str:
+        # Hosting companies hand out "postgres://..." or "postgresql://..." URLs. SQLAlchemy would
+        # pick a different driver for those, but this app ships psycopg 3, so name it explicitly.
+        # URLs that already name a driver (postgresql+psycopg://) and SQLite URLs are left alone.
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value[len(prefix):]
+        return value
 
     @property
     def cors_origin_list(self) -> list[str]:
