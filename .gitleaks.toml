@@ -4,6 +4,8 @@
 #   - vectors.json: RS256 test tokens signed with throwaway keys that are generated in memory by
 #     tests/make-fixtures.js and never saved (the file holds tokens and a public key only).
 #   - test_security.py: a made-up settings dictionary used to test production start-up checks.
+# One README line is also skipped: the example `curl ... Bearer PASTE_ACCESS_TOKEN`, where the
+# "token" is a visible placeholder. Any other line in the README is still scanned.
 title = "MAREC Store gitleaks config"
 
 [extend]
@@ -14,4 +16,8 @@ description = "Test fixtures with throwaway keys and fake settings"
 paths = [
   '''packages/marec-sdk-godot/tests/fixtures/vectors\.json''',
   '''services/api/tests/test_security\.py''',
+]
+regexTarget = "line"
+regexes = [
+  '''Authorization: Bearer PASTE_ACCESS_TOKEN''',
 ]
