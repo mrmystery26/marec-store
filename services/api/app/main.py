@@ -13,6 +13,7 @@ from app.modules.builds.router import router as builds_router
 from app.modules.builds.storage_router import router as storage_router
 from app.modules.catalog.public_router import router as store_router
 from app.modules.developer.router import router as developer_router
+from app.modules.friends.router import router as friends_router
 from app.modules.launch.router import router as launch_router
 from app.modules.library.router import router as library_router
 from app.modules.health import router as health_router
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(builds_router, prefix="/v1")
     app.include_router(storage_router, prefix="/v1")
     app.include_router(library_router, prefix="/v1")
+    app.include_router(friends_router, prefix="/v1")
     app.include_router(launch_router, prefix="/v1")
     return app
 
