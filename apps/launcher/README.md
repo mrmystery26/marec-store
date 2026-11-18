@@ -33,7 +33,7 @@ Actions on your Windows PC.
 - Paid purchases. "Buy now" explains that payments are not open and changes nothing.
 - Things the store does not send yet, so the window shows placeholders or nothing: artwork,
   screenshots and trailers, discounts, popularity, upcoming releases, USD prices, regional
-  availability. Friends and Windows desktop notifications do not exist yet.
+  availability. Windows desktop notifications do not exist yet. Friends work with friend codes and requests, but there is no online status or "now playing".
 - The installer is **not code-signed**, so Windows SmartScreen will warn you ("More info", "Run
   anyway"). Signing needs a paid certificate.
 - Release builds must ship **pinned signing keys** in `launcher.config.json`

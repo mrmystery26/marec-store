@@ -74,6 +74,7 @@ services/api/
   app/modules/catalog/            games, categories, requirements, state machine, public store API
   app/modules/developer/          developer endpoints (/v1/developer/...)
   app/modules/builds/             build uploads, hashing, manifests, storage endpoints
+  app/modules/friends/            friend codes, friend requests and friends lists (/v1/friends/...)
   app/modules/library/            owned games (entitlements), library list, install plan
   app/core/storage.py             file storage: local disk (dev) and S3-compatible (Cloudflare R2)
   app/core/signing.py             Ed25519 signing of manifests
@@ -159,6 +160,27 @@ restart stop verifying. Staging and production refuse to start without it.
    signature and key id) and one download link per file. Download each file with a normal GET;
    send a `Range: bytes=START-END` header to resume. Verify the manifest signature first, then every
    file's SHA-256 and chunk hashes against the manifest. This is exactly what the launcher will do.
+
+## Friends
+
+Players add each other with a **friend code** (like `K7QM-2XWD`), never by email or name, so nobody
+can look up who has an account. The code is made the first time it is asked for, and a player can
+replace it if it was shared by mistake (the old one stops working at once).
+
+All of these need a login:
+
+- `GET /v1/friends/code` shows your code. `POST /v1/friends/code/reset` makes a new one.
+- `POST /v1/friends/requests` with `{"friend_code": "..."}` sends a request. Codes may be typed in
+  lower case, with spaces, or without the dash. If the other player had already asked you, the two
+  requests meet and you are friends straight away (200 instead of 201).
+- `GET /v1/friends/requests` lists `incoming` and `outgoing` pending requests.
+- `POST /v1/friends/requests/{id}/accept` and `/decline` answer a request. Only the person who
+  received it can. `DELETE /v1/friends/requests/{id}` takes back a request you sent.
+- `GET /v1/friends` lists friends, sorted by name. `DELETE /v1/friends/{user_id}` unfriends.
+
+Rules: no adding yourself; a player who was declined cannot ask again, but the player who declined
+can send their own request; up to 200 friends and 50 waiting outgoing requests per player; suspended
+and deleted accounts never appear. Responses show display names only, never email addresses.
 
 ## How a game proves the player owns it (launch authorization)
 
@@ -291,6 +313,10 @@ Never change production tables by hand. Add a new migration file instead.
   token, but limits are still needed). Offline leases cannot be recalled before they expire
   (a refund or ban takes effect at the next online check).
 - The Godot SDK that checks these tokens is not written. It is deliberately not the next step.
+- Friends: there is no online status or "now playing" (that needs presence tracking), no blocking or
+  reporting, and no notification when a request arrives (the Friends page shows it when opened).
+  Friend codes are random (about 8.5 trillion possibilities) but guessing is not rate limited yet,
+  which waits for the IP-based limits above.
 - Published games cannot be edited by developers yet (an update-after-release flow is needed).
 - Admin accounts have no second factor yet (see above), and there is no admin hostname split yet.
 - Lockout is per account, so an attacker could lock out a known email. IP-based limits (Cloudflare

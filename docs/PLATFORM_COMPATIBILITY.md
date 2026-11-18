@@ -47,6 +47,7 @@ Needs from the backend to switch this on: a platform on each build (`android-arm
 | Accounts, login, tokens | Yes | Same API. Each device keeps its own login. |
 | Profile | Yes | Same API. |
 | Game library and free-game adds | Yes | Same API. |
+| Friends, friend codes and requests | Yes | Same API. Online status and "now playing" are not built. |
 | Store catalogue, prices, game details | Yes | Same API. |
 | Purchase history | Partly | Shown from the library (free additions). Paid purchases are not built. |
 | **Wishlist** | **No** | Saved on each device only. The backend has no wishlist endpoint. |
