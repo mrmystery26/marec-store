@@ -625,3 +625,212 @@ test("the Windows window is unchanged: Windows games keep Install and Play", asy
   assert.ok(button(fresh, "Install"));
   assert.ok(button(installed, "Play"));
 });
+
+// ---------------------------------------------------------------- friends
+
+/** A small stateful stand-in for the store's friends service, so every click can be checked end to end. */
+function friendsStore({ friends = [], incoming = [], outgoing = [], code = "K7QM-2XWD", sendError = null } = {}) {
+  const state = { friends: [...friends], incoming: [...incoming], outgoing: [...outgoing], code };
+  const log = [];
+  const ok = (data) => Promise.resolve({ ok: true, data });
+  const person = (r) => ({ user_id: r.user_id, display_name: r.display_name, since: "2026-11-17T00:00:00Z" });
+  return {
+    state,
+    log,
+    overrides: {
+      friends: () => (log.push(["list"]), ok({ items: state.friends, total: state.friends.length })),
+      friendRequests: () => ok({ incoming: state.incoming, outgoing: state.outgoing }),
+      friendCode: () => ok({ code: state.code }),
+      resetFriendCode: () => (log.push(["reset"]), (state.code = "NEW2-CODE"), ok({ code: state.code })),
+      sendFriendRequest: (code) => {
+        log.push(["send", code]);
+        if (sendError) return Promise.resolve({ ok: false, error: sendError });
+        return ok({ id: "r9", status: "pending", user_id: "u9", display_name: "Dee" });
+      },
+      acceptFriendRequest: (id) => {
+        log.push(["accept", id]);
+        const found = state.incoming.find((r) => r.id === id);
+        state.incoming = state.incoming.filter((r) => r.id !== id);
+        state.friends.push(person(found));
+        return ok(person(found));
+      },
+      declineFriendRequest: (id) => (log.push(["decline", id]), (state.incoming = state.incoming.filter((r) => r.id !== id)), ok(null)),
+      cancelFriendRequest: (id) => (log.push(["cancel", id]), (state.outgoing = state.outgoing.filter((r) => r.id !== id)), ok(null)),
+      removeFriend: (userId) => (log.push(["remove", userId]), (state.friends = state.friends.filter((f) => f.user_id !== userId)), ok(null)),
+    },
+  };
+}
+
+const ANA = { user_id: "u1", display_name: "Ana", since: "2026-10-01T00:00:00Z" };
+const BEA = { user_id: "u2", display_name: "Bea", since: "2026-10-05T00:00:00Z" };
+const ASKED_ME = { id: "r1", user_id: "u3", display_name: "Cy", created_at: "2026-11-10T00:00:00Z" };
+const I_ASKED = { id: "r2", user_id: "u4", display_name: "Dee", created_at: "2026-11-11T00:00:00Z" };
+
+async function openFriends(options) {
+  const fake = friendsStore(options);
+  const { root, api } = await launch([], { ...LOGGED_IN, ...fake.overrides });
+  nav(root, "Friends").dispatch("click");
+  await flush();
+  return { root, api, fake };
+}
+const friendsTabButton = (root, prefix) =>
+  findAll(root, (n) => n.tagName === "button" && n.attributes.role === "tab" && textOf(n).trim().startsWith(prefix))[0];
+const goToTab = async (root, prefix) => { friendsTabButton(root, prefix).dispatch("click"); await flush(); };
+const typeCode = (root, value) => {
+  const box = byLabel(root, "Friend code");
+  box.value = value;
+  box.dispatch("input");
+};
+const submitCode = async (root) => {
+  findAll(root, (n) => n.tagName === "form" && /panel-form/.test(n.className))[0].dispatch("submit");
+  await flush();
+};
+
+test("the friends page lists the player's real friends and counts waiting requests", async () => {
+  const { root } = await openFriends({ friends: [ANA, BEA], incoming: [ASKED_ME] });
+  const text = textOf(root);
+  assert.match(text, /Ana/);
+  assert.match(text, /Bea/);
+  assert.match(text, /Friends since/);
+  assert.ok(friendsTabButton(root, "Friends (2)"), "the friends tab shows how many friends");
+  assert.ok(friendsTabButton(root, "Requests (1)"), "the requests tab shows how many are waiting");
+  assert.doesNotMatch(text, /Sample Friend/);
+  assert.match(text, /who is online and what your friends are playing is not built yet/);
+});
+
+test("with no friends the page explains how to add one, and shows the player's own code", async () => {
+  const { root } = await openFriends();
+  assert.match(textOf(root), /No friends yet/);
+  button(root, "Add a friend").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Your friend code/);
+  assert.match(textOf(root), /K7QM-2XWD/);
+  assert.match(textOf(root), /not your email address/);
+});
+
+test("accepting a request makes a friend and refreshes both lists from the store", async () => {
+  const { root, fake } = await openFriends({ friends: [ANA], incoming: [ASKED_ME] });
+  await goToTab(root, "Requests");
+  assert.match(textOf(root), /Requests for you/);
+  assert.match(textOf(root), /Cy/);
+
+  button(root, "Accept").dispatch("click");
+  await flush();
+  assert.deepEqual(fake.log.filter((c) => c[0] === "accept"), [["accept", "r1"]]);
+  assert.match(textOf(root), /You and Cy are now friends/);
+  assert.match(textOf(root), /No friend requests/);
+  assert.ok(friendsTabButton(root, "Friends (2)"));
+});
+
+test("declining a request removes it and does not make a friend", async () => {
+  const { root, fake } = await openFriends({ incoming: [ASKED_ME] });
+  await goToTab(root, "Requests");
+  button(root, "Decline").dispatch("click");
+  await flush();
+  assert.deepEqual(fake.log.filter((c) => c[0] === "decline"), [["decline", "r1"]]);
+  assert.match(textOf(root), /No friend requests/);
+  assert.equal(fake.state.friends.length, 0);
+});
+
+test("a request the player sent can be cancelled", async () => {
+  const { root, fake } = await openFriends({ outgoing: [I_ASKED] });
+  await goToTab(root, "Requests");
+  assert.match(textOf(root), /Requests you sent/);
+  assert.match(textOf(root), /Dee/);
+  button(root, "Cancel request").dispatch("click");
+  await flush();
+  assert.deepEqual(fake.log.filter((c) => c[0] === "cancel"), [["cancel", "r2"]]);
+  assert.match(textOf(root), /No friend requests/);
+});
+
+test("removing a friend needs a second click", async () => {
+  const { root, fake } = await openFriends({ friends: [ANA, BEA] });
+  button(root, "Remove").dispatch("click");
+  await flush();
+  assert.equal(fake.log.filter((c) => c[0] === "remove").length, 0, "the first click only asks");
+  assert.ok(button(root, "Click again to remove"));
+
+  button(root, "Click again to remove").dispatch("click");
+  await flush();
+  assert.deepEqual(fake.log.filter((c) => c[0] === "remove"), [["remove", "u1"]]);
+  assert.match(textOf(root), /Ana was removed from your friends/);
+  assert.doesNotMatch(textOf(root), /Friends since.*Friends since/s, "only Bea is left");
+});
+
+test("a friend code is checked on the device before anything is sent", async () => {
+  const { root, fake } = await openFriends();
+  await goToTab(root, "Add friend");
+
+  await submitCode(root);
+  assert.match(textOf(root), /Type your friend's code/);
+
+  typeCode(root, "hello");
+  await submitCode(root);
+  assert.match(textOf(root), /does not look like a friend code/);
+  typeCode(root, "ABCD-0O1I"); // letters that never appear in codes
+  await submitCode(root);
+  assert.match(textOf(root), /does not look like a friend code/);
+  assert.equal(fake.log.filter((c) => c[0] === "send").length, 0);
+});
+
+test("a typed code is cleaned up, sent, and the box is cleared when it works", async () => {
+  const { root, fake } = await openFriends();
+  await goToTab(root, "Add friend");
+  typeCode(root, "  abcd 2345 ");
+  await submitCode(root);
+
+  assert.deepEqual(fake.log.filter((c) => c[0] === "send"), [["send", "ABCD-2345"]]);
+  assert.match(textOf(root), /Friend request sent to Dee/);
+  assert.equal(byLabel(root, "Friend code").value, "", "the box is empty again");
+});
+
+test("the store's reason for refusing a request is shown under the code box", async () => {
+  const sendError = { code: "FRIEND_CODE_NOT_FOUND", message: "No player has that friend code." };
+  const { root } = await openFriends({ sendError });
+  await goToTab(root, "Add friend");
+  typeCode(root, "ABCD-2345");
+  await submitCode(root);
+  assert.match(textOf(root), /No player has that friend code/);
+  assert.equal(byLabel(root, "Friend code").value, "ABCD-2345", "what was typed is kept so it can be fixed");
+});
+
+test("getting a new friend code asks twice, then shows the new code", async () => {
+  const { root, fake } = await openFriends();
+  await goToTab(root, "Add friend");
+  button(root, "Get a new code").dispatch("click");
+  await flush();
+  assert.equal(fake.log.filter((c) => c[0] === "reset").length, 0, "the first click only asks");
+
+  button(root, "Click again to get a new code").dispatch("click");
+  await flush();
+  assert.equal(fake.log.filter((c) => c[0] === "reset").length, 1);
+  assert.match(textOf(root), /NEW2-CODE/);
+  assert.doesNotMatch(textOf(root), /K7QM-2XWD/);
+});
+
+test("when friends cannot load the page says why and offers to try again", async () => {
+  const down = () => Promise.resolve({ ok: false, error: { code: "NETWORK_ERROR", message: "Cannot reach the store: refused" } });
+  const { root } = await launch([], { ...LOGGED_IN, ...friendsStore().overrides, friends: down });
+  nav(root, "Friends").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Could not load your friends/);
+  assert.match(textOf(root), /Cannot reach the store/);
+  assert.ok(button(root, "Try again"));
+});
+
+test("the sample preview shows labelled made-up friends and never asks the store", async () => {
+  const fake = friendsStore({ friends: [ANA] });
+  const { root } = await launch([], { ...LOGGED_IN, ...fake.overrides });
+  byLabel(root, "Settings").dispatch("click");
+  const toggle = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch" && /sample/i.test(textOf(n.parent)))[0];
+  toggle.checked = true;
+  toggle.dispatch("change");
+  await flush();
+
+  nav(root, "Friends").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /made-up people/);
+  assert.match(textOf(root), /Sample Friend A/);
+  assert.doesNotMatch(textOf(root), /Ana/);
+  assert.equal(fake.log.length, 0, "no friends request went to the store");
+});

@@ -69,9 +69,13 @@ function handle(channel, fn) {
   });
 }
 
-function requireGameId(value) {
-  if (typeof value !== "string" || !UUID.test(value)) throw new Error("Invalid game.");
+function requireId(value, label) {
+  if (typeof value !== "string" || !UUID.test(value)) throw new Error(`Invalid ${label}.`);
   return value.toLowerCase();
+}
+
+function requireGameId(value) {
+  return requireId(value, "game");
 }
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,80}$/;
@@ -118,6 +122,17 @@ function registerHandlers() {
   handle("developer:createStudio", (name) => runtime.api.createStudio(requireText(name, "studio name", 60).trim()));
   handle("developer:games", (studioId) => runtime.api.studioGames(requireGameId(studioId)));
   handle("library:list", () => runtime.service.library());
+
+  // Friends. Requests and friends are named by id, people are added by friend code.
+  handle("friends:list", () => runtime.api.friends());
+  handle("friends:requests", () => runtime.api.friendRequests());
+  handle("friends:code", () => runtime.api.friendCode());
+  handle("friends:resetCode", () => runtime.api.resetFriendCode());
+  handle("friends:send", (code) => runtime.api.sendFriendRequest(requireText(code, "friend code", 40).trim()));
+  handle("friends:accept", (id) => runtime.api.acceptFriendRequest(requireId(id, "request")));
+  handle("friends:decline", (id) => runtime.api.declineFriendRequest(requireId(id, "request")));
+  handle("friends:cancel", (id) => runtime.api.cancelFriendRequest(requireId(id, "request")));
+  handle("friends:remove", (userId) => runtime.api.removeFriend(requireId(userId, "friend")));
 
   handle("game:install", async (gameId) => {
     const id = requireGameId(gameId);

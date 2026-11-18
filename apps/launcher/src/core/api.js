@@ -163,6 +163,35 @@ class MarecApi {
   studioGames(studioId, limit = 50, offset = 0) {
     return this.request("GET", `/v1/developer/studios/${studioId}/games`, { query: { limit, offset } });
   }
+
+  // ---- Friends (people are added with a friend code, never by email or name) ----
+  friends() {
+    return this.request("GET", "/v1/friends");
+  }
+  friendRequests() {
+    return this.request("GET", "/v1/friends/requests");
+  }
+  friendCode() {
+    return this.request("GET", "/v1/friends/code");
+  }
+  resetFriendCode() {
+    return this.request("POST", "/v1/friends/code/reset");
+  }
+  sendFriendRequest(friendCode) {
+    return this.request("POST", "/v1/friends/requests", { body: { friend_code: friendCode } });
+  }
+  acceptFriendRequest(requestId) {
+    return this.request("POST", `/v1/friends/requests/${encodeURIComponent(requestId)}/accept`);
+  }
+  declineFriendRequest(requestId) {
+    return this.request("POST", `/v1/friends/requests/${encodeURIComponent(requestId)}/decline`);
+  }
+  cancelFriendRequest(requestId) {
+    return this.request("DELETE", `/v1/friends/requests/${encodeURIComponent(requestId)}`);
+  }
+  removeFriend(userId) {
+    return this.request("DELETE", `/v1/friends/${encodeURIComponent(userId)}`);
+  }
 }
 
 const SORTS = ["newest", "price_asc", "price_desc", "title"];

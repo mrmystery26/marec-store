@@ -33,6 +33,9 @@
   const TAB_OF = { home: "home", store: "store", game: "store", search: "search", library: "library", profile: "profile", settings: "profile", downloads: "profile", wishlist: "profile", friends: "profile", publisher: "profile" };
   const TOP_LEVEL = new Set(["home", "store", "library", "downloads", "wishlist", "friends", "profile", "settings", "publisher"]);
 
+  // Form and two-click-confirm state for the Friends page. A new object whenever the account changes.
+  const freshFriendsUI = () => ({ code: "", error: "", sending: false, confirmRemove: null, confirmReset: false });
+
   function createApp({ doc, root, api, now = Date.now, storage = null, platform = createPlatform(host) }) {
     const { h, icon, button } = createDom(doc);
     const local = createLocalStore(storage, { now });
@@ -44,6 +47,7 @@
       past: [], future: [], // for the Back and Forward buttons
       user: null, apiBase: "", installRoot: "", secureStorage: true, version: "",
       library: [], loadingLibrary: false,
+      friendsUI: freshFriendsUI(),
       confirming: null, // game id waiting for a second click on Uninstall
       authTab: "login", profileTab: "overview", settingsSection: "general", friendsTab: "all", discoverTab: "recommended",
       mediaIndex: 0,
@@ -105,6 +109,7 @@
     function resetSession() {
       state.user = null;
       state.library = [];
+      state.friendsUI = freshFriendsUI();
       state.past = [];
       state.future = [];
       cache.clear();
@@ -331,6 +336,77 @@
           fail(error);
           return null;
         }
+      },
+
+      // ---- Friends: every change reloads the page's data from the store, so what you see is what the store has.
+      async sendFriendRequest(code) {
+        const ui = state.friendsUI;
+        ui.sending = true;
+        try {
+          const result = await call(api.sendFriendRequest(code));
+          ui.code = "";
+          ui.error = "";
+          invalidate("friends");
+          toast(result.status === "accepted" ? `You and ${result.display_name} are now friends.` : `Friend request sent to ${result.display_name}.`, "info");
+        } catch (error) {
+          if (error.code === "SESSION_EXPIRED") return fail(error);
+          ui.error = error.message; // shown under the code box
+        } finally {
+          ui.sending = false;
+          if (state.user) renderView();
+        }
+      },
+      async answerFriendRequest(request, accept) {
+        try {
+          await call(accept ? api.acceptFriendRequest(request.id) : api.declineFriendRequest(request.id));
+          toast(accept ? `You and ${request.display_name} are now friends.` : "Request declined.", "info");
+        } catch (error) {
+          fail(error);
+        }
+        invalidate("friends");
+        if (state.user) renderView();
+      },
+      async cancelFriendRequest(request) {
+        try {
+          await call(api.cancelFriendRequest(request.id));
+          toast("Request cancelled.", "info");
+        } catch (error) {
+          fail(error);
+        }
+        invalidate("friends");
+        if (state.user) renderView();
+      },
+      async removeFriend(friend) {
+        const ui = state.friendsUI;
+        if (ui.confirmRemove !== friend.user_id) {
+          ui.confirmRemove = friend.user_id; // the first click only asks "are you sure?"
+          return renderView();
+        }
+        ui.confirmRemove = null;
+        try {
+          await call(api.removeFriend(friend.user_id));
+          toast(`${friend.display_name} was removed from your friends.`, "info");
+        } catch (error) {
+          fail(error);
+        }
+        invalidate("friends");
+        if (state.user) renderView();
+      },
+      async resetFriendCode() {
+        const ui = state.friendsUI;
+        if (!ui.confirmReset) {
+          ui.confirmReset = true;
+          return renderView();
+        }
+        ui.confirmReset = false;
+        try {
+          await call(api.resetFriendCode());
+          toast("You have a new friend code. The old one no longer works.", "info");
+        } catch (error) {
+          fail(error);
+        }
+        invalidate("friends");
+        if (state.user) renderView();
       },
 
       studios: () => call(api.studios()),

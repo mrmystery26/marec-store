@@ -167,3 +167,47 @@ test("register, add to library and the publisher calls use the documented endpoi
   assert.deepEqual(calls[3].body, { name: "Lakeshore Games" });
   assert.match(calls[4].url, /^\/v1\/developer\/studios\/22222222-2222-4222-8222-222222222222\/games\?/);
 });
+
+test("friends calls use the documented endpoints, and ids are encoded", async (t) => {
+  const { calls, base } = await backend(t, () => ({ status: 200, json: {} }));
+  const api = new MarecApi({ baseUrl: base, tokenStore: memoryTokens({ accessToken: "A", refreshToken: "R" }) });
+  const id = "33333333-3333-4333-8333-333333333333";
+
+  await api.friends();
+  await api.friendRequests();
+  await api.friendCode();
+  await api.resetFriendCode();
+  await api.sendFriendRequest("ABCD-2345");
+  await api.acceptFriendRequest(id);
+  await api.declineFriendRequest(id);
+  await api.cancelFriendRequest(id);
+  await api.removeFriend(id);
+
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    "GET /v1/friends",
+    "GET /v1/friends/requests",
+    "GET /v1/friends/code",
+    "POST /v1/friends/code/reset",
+    "POST /v1/friends/requests",
+    `POST /v1/friends/requests/${id}/accept`,
+    `POST /v1/friends/requests/${id}/decline`,
+    `DELETE /v1/friends/requests/${id}`,
+    `DELETE /v1/friends/${id}`,
+  ]);
+  assert.deepEqual(calls[4].body, { friend_code: "ABCD-2345" });
+  assert.ok(calls.every((c) => c.auth === "Bearer A"), "every friends call is signed in");
+
+  await api.removeFriend("a/b?x=1"); // an odd id can never change which address is called
+  assert.equal(calls.at(-1).url, "/v1/friends/a%2Fb%3Fx%3D1");
+});
+
+test("friends answers with no body work, and the store's refusals keep their code", async (t) => {
+  const refuse = { status: 409, json: { error: { code: "REQUEST_DECLINED", message: "This player did not accept your earlier request.", request_id: "r1" } } };
+  const { base } = await backend(t, (req) => (req.method === "POST" && req.url === "/v1/friends/requests" ? refuse : { status: 204 }));
+  const api = new MarecApi({ baseUrl: base, tokenStore: memoryTokens({ accessToken: "A", refreshToken: "R" }) });
+  const id = "33333333-3333-4333-8333-333333333333";
+
+  await assert.doesNotReject(api.declineFriendRequest(id));
+  await assert.doesNotReject(api.removeFriend(id));
+  await assert.rejects(api.sendFriendRequest("ABCD-2345"), (e) => e instanceof ApiError && e.status === 409 && e.code === "REQUEST_DECLINED");
+});

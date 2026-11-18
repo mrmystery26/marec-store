@@ -154,6 +154,16 @@
       createStudio: wrap((name) => api().createStudio(name)),
       studioGames: wrap((studioId) => api().studioGames(studioId)),
 
+      friends: wrap(() => api().friends()),
+      friendRequests: wrap(() => api().friendRequests()),
+      friendCode: wrap(() => api().friendCode()),
+      resetFriendCode: wrap(() => api().resetFriendCode()),
+      sendFriendRequest: wrap((code) => api().sendFriendRequest(code)),
+      acceptFriendRequest: wrap((requestId) => api().acceptFriendRequest(requestId)),
+      declineFriendRequest: wrap((requestId) => api().declineFriendRequest(requestId)),
+      cancelFriendRequest: wrap((requestId) => api().cancelFriendRequest(requestId)),
+      removeFriend: wrap((userId) => api().removeFriend(userId)),
+
       saveSettings: wrap(async (next) => {
         const url = new URL(String(next.apiBase));
         if (!["http:", "https:"].includes(url.protocol)) throw failure("BAD_SERVER", "The server address must start with https://");

@@ -204,7 +204,18 @@
         };
       },
 
-      friends: () => (useSample() ? sample.SAMPLE_FRIENDS : []),
+      /** The made-up people shown while the sample-store preview is on. */
+      sampleFriends: () => sample.SAMPLE_FRIENDS,
+
+      /** Everything the Friends page needs from the store, in one go (live store only). */
+      async social() {
+        const [list, requests, mine] = await Promise.all([
+          unwrap(api.friends()),
+          unwrap(api.friendRequests()),
+          unwrap(api.friendCode()),
+        ]);
+        return { friends: list.items, incoming: requests.incoming, outgoing: requests.outgoing, code: mine.code };
+      },
     };
   }
 

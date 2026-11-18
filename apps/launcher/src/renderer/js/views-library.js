@@ -236,24 +236,126 @@
   }
 
   // ------------------------------------------------------------------ friends
-  function friends(ctx) {
+  // Same letters as the store's friend codes (no 0/O or 1/I/L), so mistakes are caught before sending.
+  const CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+  /** Turns what the player typed into a plain 8-character code, or says what is wrong. */
+  function validateFriendCode(value) {
+    const code = String(value || "").toUpperCase().replace(/[\s-]/g, "");
+    if (!code) return { error: "Type your friend's code." };
+    if (code.length !== 8 || [...code].some((ch) => !CODE_LETTERS.includes(ch))) {
+      return { error: "That does not look like a friend code. Codes look like ABCD-2345." };
+    }
+    return { code: `${code.slice(0, 4)}-${code.slice(4)}` };
+  }
+
+  /** The made-up people shown only while the sample-store preview is on. Nothing here is connected. */
+  function friendsPreview(ctx) {
     const { h, c } = ctx;
-    const tab = ctx.state.friendsTab;
-    const list = ctx.data.friends().filter((f) => tab === "all" || (tab === "online" && f.status === "Online"));
     const tabs = [["all", "All friends"], ["online", "Online"], ["requests", "Requests"]];
+    const tab = tabs.some(([value]) => value === ctx.state.friendsTab) ? ctx.state.friendsTab : "all";
+    const list = ctx.data.sampleFriends().filter((f) => tab === "all" || (tab === "online" && f.status === "Online"));
     return h("div", { class: "page friends" },
-      h("header", { class: "page-head" }, h("h1", {}, "Friends"), h("p", { class: "muted" }, "Friends are not available yet. This is how the page will look.")),
-      c.notice("info", "Adding friends, invites and activity need the store's friends service, which is not built yet. Nothing on this page is connected."),
+      h("header", { class: "page-head" }, h("h1", {}, "Friends"), h("p", { class: "muted" }, "This is how the page looks with made-up people.")),
+      c.notice("info", "You are previewing the store with sample data, so these friends are not real. Turn the preview off in Settings to use your real friends."),
       h("div", { class: "tabs", role: "tablist" }, tabs.map(([value, label]) =>
         h("button", { type: "button", role: "tab", class: tab === value ? "on" : "", "aria-selected": String(tab === value), onclick: () => { ctx.state.friendsTab = value; ctx.rerender(); } }, label))),
       list.length && tab !== "requests"
         ? h("div", { class: "friend-list" }, list.map((f) =>
             h("div", { class: "friend-row" }, c.avatar(f.name), h("div", { class: "dl-main" }, h("div", { class: "card-title" }, f.name), h("div", { class: "muted small" }, f.playing ? `Playing ${f.playing}` : f.status)),
               h("span", { class: `status ${f.status === "Online" ? "ok" : "off"}` }, f.status))))
-        : c.emptyState({ icon: "users", title: tab === "requests" ? "No friend requests" : "No friends yet", body: "Your friends list will appear here when friends are available." }));
+        : c.emptyState({ icon: "users", title: tab === "requests" ? "No friend requests" : "No friends online", body: "The preview has no real people, so there is nothing here." }));
   }
 
-  const api = { library, downloads, wishlist, friends, statusOf, quickAction };
+  function friendsTab(ctx, data) {
+    const { h, c, button } = ctx;
+    const ui = ctx.state.friendsUI;
+    if (!data.friends.length) {
+      return c.emptyState({ icon: "users", title: "No friends yet", body: "Share your friend code, or type a friend's code, on the Add friend tab.",
+        actions: [button({ label: "Add a friend", icon: "users", kind: "primary", onclick: () => { ctx.state.friendsTab = "add"; ctx.rerender(); } })] });
+    }
+    return h("div", { class: "friend-list" }, data.friends.map((f) => {
+      const confirming = ui.confirmRemove === f.user_id;
+      return h("div", { class: "friend-row" }, c.avatar(f.display_name),
+        h("div", { class: "dl-main" }, h("div", { class: "card-title" }, f.display_name), h("div", { class: "muted small" }, `Friends since ${ctx.fmt.formatDate(f.since) || "recently"}`)),
+        button({ label: confirming ? "Click again to remove" : "Remove", kind: confirming ? "danger" : "ghost", onclick: () => ctx.actions.removeFriend(f) }));
+    }));
+  }
+
+  function requestsTab(ctx, data) {
+    const { h, c, button } = ctx;
+    if (!data.incoming.length && !data.outgoing.length) {
+      return c.emptyState({ icon: "users", title: "No friend requests", body: "Requests you send and receive show up here." });
+    }
+    const row = (request, actions, note) => h("div", { class: "friend-row" }, c.avatar(request.display_name),
+      h("div", { class: "dl-main" }, h("div", { class: "card-title" }, request.display_name), h("div", { class: "muted small" }, `${note} ${ctx.fmt.formatDate(request.created_at) || ""}`.trim())),
+      h("div", { class: "row" }, actions));
+    return h("div", {},
+      data.incoming.length ? h("section", { class: "block" }, c.sectionHead("Requests for you", "People who want to be your friend."),
+        h("div", { class: "friend-list" }, data.incoming.map((r) => row(r, [
+          button({ label: "Accept", icon: "check", kind: "primary", onclick: () => ctx.actions.answerFriendRequest(r, true) }),
+          button({ label: "Decline", kind: "ghost", onclick: () => ctx.actions.answerFriendRequest(r, false) })], "Asked on")))) : null,
+      data.outgoing.length ? h("section", { class: "block" }, c.sectionHead("Requests you sent", "Waiting for the other person to answer."),
+        h("div", { class: "friend-list" }, data.outgoing.map((r) => row(r, [
+          button({ label: "Cancel request", kind: "ghost", onclick: () => ctx.actions.cancelFriendRequest(r) })], "Sent on")))) : null);
+  }
+
+  function addFriendForm(ctx) {
+    const { h, c, button } = ctx;
+    const ui = ctx.state.friendsUI;
+    const input = h("input", { value: ui.code, maxlength: "14", placeholder: "ABCD-2345", autocomplete: "off", autocapitalize: "characters", spellcheck: "false", "aria-label": "Friend code", oninput: (e) => { ui.code = e.target.value; } });
+    const holder = h("div", {});
+    const paint = () => holder.replaceChildren(c.field({ label: "Friend code", error: ui.error, hint: "Ask your friend for the code on their Add friend tab.", input }));
+    paint();
+    return h("form", { class: "panel-form", novalidate: "novalidate", onsubmit: async (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const result = validateFriendCode(ui.code);
+      ui.error = result.error || "";
+      if (result.error) return paint();
+      await ctx.actions.sendFriendRequest(result.code);
+    } }, holder, button({ label: "Send friend request", kind: "primary", type: "submit", disabled: ui.sending }));
+  }
+
+  function addTab(ctx, data) {
+    const { h, c, button } = ctx;
+    const ui = ctx.state.friendsUI;
+    return h("div", {},
+      h("section", { class: "block narrow" }, c.sectionHead("Your friend code", "Give this code to people you know. It is not your email address."),
+        h("div", { class: "friend-code", "aria-label": "Your friend code" }, h("code", {}, data.code)),
+        h("p", { class: "muted small" }, "Anyone with this code can send you a request, and you decide whether to accept. If you shared it by mistake, get a new one and the old code stops working."),
+        button({ label: ui.confirmReset ? "Click again to get a new code" : "Get a new code", kind: ui.confirmReset ? "danger" : "ghost", icon: "refresh", onclick: () => ctx.actions.resetFriendCode() })),
+      h("section", { class: "block narrow" }, c.sectionHead("Add a friend", "Type the code your friend gave you."), addFriendForm(ctx)));
+  }
+
+  const FRIEND_TABS = [["all", "Friends"], ["requests", "Requests"], ["add", "Add friend"]];
+
+  function friends(ctx) {
+    if (ctx.data.mode() === "sample") return friendsPreview(ctx);
+    const { h, c, button } = ctx;
+    const ui = ctx.state.friendsUI;
+    const res = ctx.resource("friends:live", () => ctx.data.social());
+    const data = res.status === "ready" ? res.data : null;
+    const tab = FRIEND_TABS.some(([value]) => value === ctx.state.friendsTab) ? ctx.state.friendsTab : "all";
+    const count = (value) => (!data ? 0 : value === "all" ? data.friends.length : value === "requests" ? data.incoming.length : 0);
+    const tabs = h("div", { class: "tabs", role: "tablist" }, FRIEND_TABS.map(([value, label]) =>
+      h("button", { type: "button", role: "tab", class: tab === value ? "on" : "", "aria-selected": String(tab === value),
+        onclick: () => { ctx.state.friendsTab = value; ui.confirmRemove = null; ui.confirmReset = false; ctx.rerender(); } },
+        count(value) ? `${label} (${count(value)})` : label)));
+
+    let body;
+    if (res.status === "loading") body = h("div", { "aria-busy": "true" }, h("div", { class: "bone wide" }), h("div", { class: "bone" }));
+    else if (res.status === "error") {
+      body = c.errorState({ title: "Could not load your friends", message: res.error.message,
+        actions: [button({ label: "Try again", icon: "refresh", kind: "primary", onclick: () => { ctx.invalidate("friends"); ctx.rerender(); } })] });
+    } else body = tab === "requests" ? requestsTab(ctx, data) : tab === "add" ? addTab(ctx, data) : friendsTab(ctx, data);
+
+    return h("div", { class: "page friends" },
+      h("header", { class: "page-head" }, h("h1", {}, "Friends"), h("p", { class: "muted" }, "Add people with a friend code and manage your requests.")),
+      c.notice("info", "Seeing who is online and what your friends are playing is not built yet."),
+      tabs, body);
+  }
+
+  const api = { library, downloads, wishlist, friends, statusOf, quickAction, validateFriendCode };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else (host.MarecUI = host.MarecUI || {})["views-library"] = api;
 })(typeof window !== "undefined" ? window : globalThis);

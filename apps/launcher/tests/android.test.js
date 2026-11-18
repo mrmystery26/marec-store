@@ -198,3 +198,45 @@ test("a phone can run Android games only, and a PC Windows games only", () => {
   assert.equal(pc.canRun(["android"]), false);
   assert.deepEqual(phone.names(["windows", "android"]), ["Windows PC", "Android"]);
 });
+
+// ---------------------------------------------------------------- friends
+test("friends actions on a phone go through the real API client and keep the store's messages", async (t) => {
+  const FRIEND = "44444444-4444-4444-8444-444444444444";
+  const server = await loggedInServer(t, (req) => {
+    if (req.url === "/v1/friends") return { status: 200, json: { items: [{ user_id: FRIEND, display_name: "Ana", since: "2026-11-01T00:00:00Z" }], total: 1 } };
+    if (req.url === "/v1/friends/requests" && req.method === "GET") return { status: 200, json: { incoming: [], outgoing: [] } };
+    if (req.url === "/v1/friends/requests" && req.method === "POST") return { status: 409, json: { error: { code: "REQUEST_DECLINED", message: "This player did not accept your earlier request." } } };
+    if (req.url === "/v1/friends/code") return { status: 200, json: { code: "K7QM-2XWD" } };
+    if (req.url.startsWith("/v1/friends/") && req.method === "DELETE") return { status: 204 };
+    return null;
+  });
+  const { native, hub } = fakeNative({ defaultApiBase: server.base });
+  const bridge = createAndroidBridge({ native, hub, MarecApi });
+  await bridge.login("pat@example.com", "secret");
+
+  assert.equal((await bridge.friends()).data.items[0].display_name, "Ana");
+  assert.deepEqual((await bridge.friendRequests()).data, { incoming: [], outgoing: [] });
+  assert.equal((await bridge.friendCode()).data.code, "K7QM-2XWD");
+
+  const refused = await bridge.sendFriendRequest("ABCD-2345");
+  assert.deepEqual(refused.error, { code: "REQUEST_DECLINED", message: "This player did not accept your earlier request." });
+  assert.deepEqual(server.calls.findLast((c) => c.url === "/v1/friends/requests").body, { friend_code: "ABCD-2345" });
+
+  assert.equal((await bridge.removeFriend(FRIEND)).ok, true);
+  const removal = server.calls.at(-1);
+  assert.deepEqual([removal.method, removal.url, removal.auth], ["DELETE", `/v1/friends/${FRIEND}`, "Bearer A1"]);
+});
+
+test("Windows and Android offer the screens exactly the same actions", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const preload = fs.readFileSync(path.join(__dirname, "../src/main/preload.js"), "utf8");
+  const body = preload.slice(preload.indexOf('exposeInMainWorld("marec", {'));
+  const windowsActions = [...body.matchAll(/^  (\w+): /gm)].map((m) => m[1]).sort();
+
+  const { native, hub } = fakeNative({ defaultApiBase: "http://127.0.0.1:1" });
+  const androidActions = Object.keys(createAndroidBridge({ native, hub, MarecApi })).sort();
+
+  assert.ok(windowsActions.length > 20, "the preload list was read");
+  assert.deepEqual(androidActions, windowsActions);
+});
