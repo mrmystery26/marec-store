@@ -5,8 +5,8 @@
   function createComponents({ h, icon, button, fmt, env }) {
     // ------------------------------------------------------------------ artwork
     /**
-     * Game artwork. The store does not send artwork yet, so this draws a plain, clearly marked
-     * placeholder. When a game has `artwork.cover` / `artwork.hero` it shows that image instead.
+     * Game artwork. The store does not send artwork yet, so a game without a cover image gets its
+     * initials on a coloured tile. When a game has `artwork.cover` / `artwork.hero` it shows that image instead.
      * (The window's content security policy must allow the image host before real URLs will load.)
      */
     function artwork(game, { kind = "cover", caption = false } = {}) {
@@ -14,9 +14,9 @@
       if (source) return h("img", { class: `art art-${kind}`, src: source, alt: "" });
       const el = h(
         "div",
-        { class: `art art-${kind} placeholder`, role: "img", "aria-label": `${game.title} (placeholder artwork)`, title: "Placeholder artwork" },
+        { class: `art art-${kind} placeholder`, role: "img", "aria-label": `${game.title} (no cover image)`, title: "No cover image yet" },
         h("span", { class: "art-mark" }, fmt.initials(game.title)),
-        caption ? h("span", { class: "art-caption" }, "Placeholder artwork") : null
+        caption ? h("span", { class: "art-caption" }, "No cover image yet") : null
       );
       el.style.background = `hsl(${fmt.hueOf(game.title)}, 16%, 17%)`;
       return el;
@@ -44,7 +44,7 @@
       return [
         env.isOwned(game.id) ? badge("owned", "In library") : null,
         game.upcoming ? badge("soon", "Coming soon") : null,
-        game.sample ? badge("sample", "Sample") : null,
+        game.isDemo ? badge("demo", "Demo") : null,
       ];
     }
 

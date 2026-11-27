@@ -1,74 +1,106 @@
-from types import SimpleNamespace
+import uuid
 
 from sqlalchemy import select
 
-from app.modules.audit.models import AuditLog
-from app.modules.catalog.models import Game
-from app.seed import main
-from tests.helpers import create_account, upload_ready_build
+from app.core.db import utcnow
+from app.modules.auth.models import User
+from app.modules.catalog.models import Category, Game
+from app.modules.library.models import GameEntitlement
+from app.modules.studios.models import Studio, StudioMembership
+from app.seed import PLACEHOLDER_EMAIL, PLACEHOLDER_STUDIO_SLUG, main
+from tests.helpers import create_account, make_game, make_studio
 
 
-def totals(client):
-    everything = client.get("/v1/games", params={"limit": 50}).json()["total"]
-    free = client.get("/v1/games", params={"free": "true"}).json()["total"]
-    return everything, free
+def make_old_placeholders(db_session):
+    """What older versions of the project loaded: a made-up user, studio and games."""
+    user = User(id=uuid.uuid4(), email=PLACEHOLDER_EMAIL, password_hash=None, display_name="Demo")
+    db_session.add(user)
+    studio = Studio(
+        id=uuid.uuid4(),
+        name="MAREC Demo Studio",
+        slug=PLACEHOLDER_STUDIO_SLUG,
+        status="verified",
+        verified_at=utcnow(),
+    )
+    db_session.add(studio)
+    db_session.flush()
+    db_session.add(StudioMembership(studio_id=studio.id, user_id=user.id, role="owner"))
+    db_session.commit()
+    games = [
+        make_game(db_session, studio, "Demo: Kwacha Kingdom", "published", with_build=False),
+        make_game(db_session, studio, "Demo: Lake Malawi Racer", "published", with_build=False),
+    ]
+    return studio, games
 
 
-def test_seed_makes_the_store_browsable(client, session_factory):
+def test_seed_adds_only_categories(client, session_factory, db_session):
     assert main([], session_factory) == 0
-    assert totals(client) == (6, 2)
-
-    categories = client.get("/v1/categories").json()
-    assert [c["name"] for c in categories][:3] == ["Action", "Adventure", "Puzzle"]
-
-    detail = client.get("/v1/games/demo-lake-malawi-racer").json()
-    assert detail["is_free"] is True
-    assert detail["studio"]["slug"] == "marec-demo-studio"
-    assert "Not a real product" in detail["description"]
-    assert len(detail["requirements"]) == 2
+    names = [c["name"] for c in client.get("/v1/categories").json()]
+    assert names[:3] == ["Action", "Adventure", "Puzzle"] and len(names) == 8
+    assert client.get("/v1/games").json()["total"] == 0
+    assert db_session.scalar(select(User.id)) is None  # no made-up accounts either
 
 
 def test_seed_is_safe_to_repeat(client, session_factory, db_session):
     main([], session_factory)
     main([], session_factory)
-    assert totals(client)[0] == 6
+    assert len(list(db_session.scalars(select(Category)))) == 8
+
+
+def test_placeholders_left_by_older_versions_can_be_removed(
+    client, session_factory, db_session, capsys
+):
+    _, games = make_old_placeholders(db_session)
+    player, _ = create_account(client, db_session, "player@example.com")
+    db_session.add(GameEntitlement(user_id=player.id, game_id=games[0].id, source="free"))
+    db_session.commit()
+    assert client.get("/v1/games").json()["total"] == 2
+
+    assert main(["--remove-placeholders"], session_factory) == 0
+    assert "Removed 2 placeholder games" in capsys.readouterr().out
     db_session.expire_all()
-    stmt = select(AuditLog).where(AuditLog.action == "seed.demo_created")
-    assert len(list(db_session.scalars(stmt))) == 1
+    assert client.get("/v1/games").json()["total"] == 0
+    assert db_session.scalar(select(User).where(User.email == PLACEHOLDER_EMAIL)) is None
+    assert db_session.scalar(select(Studio).where(Studio.slug == PLACEHOLDER_STUDIO_SLUG)) is None
+    assert db_session.scalar(select(GameEntitlement.id)) is None
+    assert db_session.scalar(select(User).where(User.email == "player@example.com"))
 
 
-def test_seed_can_be_removed(client, session_factory):
-    main([], session_factory)
-    assert main(["--remove"], session_factory) == 0
-    assert totals(client) == (0, 0)
-    assert client.get("/v1/games/demo-lake-malawi-racer").status_code == 404
-    assert len(client.get("/v1/categories").json()) == 8  # categories are kept
+def test_removing_placeholders_twice_does_nothing_more(session_factory, db_session, capsys):
+    make_old_placeholders(db_session)
+    main(["--remove-placeholders"], session_factory)
+    capsys.readouterr()
+    assert main(["--remove-placeholders"], session_factory) == 0
+    assert "No placeholders found" in capsys.readouterr().out
 
 
-def test_seed_refuses_to_run_in_production(client, session_factory, monkeypatch):
-    monkeypatch.setattr("app.seed.get_settings", lambda: SimpleNamespace(environment="production"))
-    assert main([], session_factory) == 2
-    assert totals(client) == (0, 0)
+def test_a_real_studio_with_the_same_name_is_never_removed(
+    client, session_factory, db_session, capsys
+):
+    """After the cleanup, a real developer may pick the name 'MAREC Demo Studio'. Running the
+    cleanup again (it runs on every start-up) must leave their studio and games alone."""
+    owner, _ = create_account(client, db_session, "real@example.com")
+    studio = make_studio(db_session, owner, "MAREC Demo Studio")
+    make_game(db_session, studio, "Real Game", "published")
+    assert studio.slug == PLACEHOLDER_STUDIO_SLUG
+
+    assert main(["--remove-placeholders"], session_factory) == 0
+    assert "No placeholders found" in capsys.readouterr().out
+    db_session.expire_all()
+    assert db_session.get(Studio, studio.id) is not None
+    assert db_session.scalar(select(Game).where(Game.title == "Real Game")) is not None
 
 
-def test_test_game_can_be_uploaded_to_and_published(client, session_factory, db_session):
-    _, tokens = create_account(client, db_session, "dev@example.com")
-    assert main(["--test-game", "dev@example.com"], session_factory) == 0
-    game = db_session.scalar(select(Game).where(Game.slug == "launcher-test-game"))
-    assert game.status == "draft"
-    assert client.get("/v1/games/launcher-test-game").status_code == 404  # not public yet
-
-    files = {"Game.exe": b"MZ" + bytes(50), "data/x.pck": b"abc"}
-    upload_ready_build(client, tokens, game.id, files)
-    assert main(["--publish", "launcher-test-game"], session_factory) == 0
-    assert client.get("/v1/games/launcher-test-game").status_code == 200
-
-
-def test_test_game_needs_an_account_and_publishing_needs_a_build(
+def test_a_real_studio_survives_even_when_placeholders_exist_beside_it(
     client, session_factory, db_session
 ):
-    assert main(["--test-game", "nobody@example.com"], session_factory) == 1
-    create_account(client, db_session, "dev@example.com")
-    assert main(["--test-game", "dev@example.com"], session_factory) == 0
-    assert main(["--publish", "launcher-test-game"], session_factory) == 1
-    assert main(["--publish", "no-such-game"], session_factory) == 1
+    placeholder, _ = make_old_placeholders(db_session)
+    placeholder_id = placeholder.id
+    owner, _ = create_account(client, db_session, "real@example.com")
+    other = make_studio(db_session, owner, "Zomba Games")
+    other_id = other.id
+    make_game(db_session, other, "Real Game", "published")
+    main(["--remove-placeholders"], session_factory)
+    db_session.expire_all()
+    assert db_session.get(Studio, other_id) is not None
+    assert db_session.get(Studio, placeholder_id) is None

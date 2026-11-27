@@ -2,20 +2,62 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { app, BrowserWindow, ipcMain, safeStorage, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell } = require("electron");
+const nodeCrypto = require("node:crypto");
 const { MarecApi, cleanGamesQuery } = require("../core/api");
 const { LauncherService } = require("../core/service");
 const { startGame } = require("../core/launch");
 const { JsonFile, SecureStore, loadOrCreateDeviceId } = require("../core/store");
+const { uploadBuild, scanFolder } = require("../core/uploader");
+const google = require("../renderer/js/google-signin");
 const config = require("../../launcher.config.json");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 let mainWindow = null;
 let runtime = null;
+let pickedFolder = null; // the game folder the person chose, the only one an upload may use
+let uploadAbort = null;
+let queuedDeepLink = null; // a marecstore:// link that arrived before the window was ready
+
+const PROTOCOL = "marecstore";
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId("com.marecstudios.store.launcher");
+
+// Let Windows hand marecstore://auth links (the way back from Google) to this app.
+if (process.defaultApp) {
+  if (process.argv.length >= 2) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient(PROTOCOL);
+}
+
+const deepLinkIn = (argv) => argv.find((arg) => typeof arg === "string" && google.isCallback(arg));
+
+const nodeCryptoParts = {
+  randomBytes: (n) => new Uint8Array(nodeCrypto.randomBytes(n)),
+  sha256: async (bytes) => nodeCrypto.createHash("sha256").update(bytes).digest(),
+};
+
+function tell(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+async function handleDeepLink(url) {
+  if (!url || !google.isCallback(url)) return;
+  if (!runtime || !mainWindow) {
+    queuedDeepLink = url;
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+  try {
+    const user = await runtime.google.complete(url);
+    if (user) tell("auth:event", { type: "signed-in", user });
+  } catch (error) {
+    tell("auth:event", { type: "failed", code: error.code || "ERROR", message: error.message });
+  }
+}
 
 // Secrets (login session, this PC's id) are encrypted with the Windows account (DPAPI).
 const osCrypto = {
@@ -53,7 +95,7 @@ function build() {
     pinnedKeys: (config.pinnedManifestKeys || []).map((k) => ({ kid: k.kid, publicKey: k.publicKey })),
     startGameImpl: (args) => startGame({ ...args, timeoutMs: 15000 }),
   });
-  runtime = { settings, api, service };
+  runtime = { settings, api, service, google: google.createGoogleSignIn({ api, crypto: nodeCryptoParts }) };
 }
 
 function handle(channel, fn) {
@@ -90,6 +132,14 @@ function requireText(value, label, max) {
   return value;
 }
 
+const STATUS = /^[a-z_]{3,20}$/;
+
+function optionalStatus(value) {
+  if (value == null || value === "") return undefined;
+  if (typeof value !== "string" || !STATUS.test(value)) throw new Error("Invalid status.");
+  return value;
+}
+
 function registerHandlers() {
   handle("state:get", async () => ({
     apiBase: runtime.settings.apiBase,
@@ -117,10 +167,88 @@ function registerHandlers() {
   handle("catalog:game", (slug) => runtime.api.game(requireSlug(slug)));
   handle("library:add", (gameId) => runtime.api.addToLibrary(requireGameId(gameId)));
 
-  // Publisher area: list and create studios, list their games. Nothing else is exposed.
-  handle("developer:studios", () => runtime.api.studios());
-  handle("developer:createStudio", (name) => runtime.api.createStudio(requireText(name, "studio name", 60).trim()));
+  // Sign in with Google: the system browser does the signing in, the store sends the person back
+  // here with a one-time ticket (see handleDeepLink). Only Google's own page is ever opened.
+  handle("auth:providers", () => runtime.api.providers());
+  handle("auth:googleStart", async () => {
+    const { authUrl } = await runtime.google.begin();
+    await shell.openExternal(authUrl);
+    return { started: true };
+  });
+  handle("auth:googleCancel", () => {
+    runtime.google.cancel();
+    return { cancelled: true };
+  });
+  handle("auth:sendEmailCode", () => runtime.api.sendEmailCode());
+  handle("auth:verifyEmail", (code) => {
+    if (typeof code !== "string" || !/^\d{6}$/.test(code.trim())) throw new Error("Enter the 6-digit code from the email.");
+    return runtime.api.verifyEmail(code.trim());
+  });
+
+  // Publisher area: the developer account, demos, builds and the SDK file for a game.
+  handle("developer:account", () => runtime.api.developerAccount());
+  handle("developer:register", (studioName, termsVersion) =>
+    runtime.api.registerDeveloper(requireText(studioName, "studio name", 60).trim(), requireText(termsVersion, "rules version", 16)));
   handle("developer:games", (studioId) => runtime.api.studioGames(requireGameId(studioId)));
+  handle("developer:createGame", (studioId, title) => runtime.api.createGame(requireId(studioId, "studio"), requireText(title, "title", 80).trim()));
+  handle("developer:game", (gameId) => runtime.api.developerGame(requireGameId(gameId)));
+  handle("developer:updateGame", (gameId, changes) => {
+    if (!changes || typeof changes !== "object" || Array.isArray(changes)) throw new Error("Invalid changes.");
+    return runtime.api.updateGame(requireGameId(gameId), changes);
+  });
+  handle("developer:submitGame", (gameId) => runtime.api.submitGame(requireGameId(gameId)));
+  handle("developer:builds", (gameId) => runtime.api.builds(requireGameId(gameId)));
+
+  handle("developer:pickBuildFolder", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
+    if (result.canceled) return null;
+    const scan = scanFolder(result.filePaths[0]);
+    pickedFolder = scan.root;
+    return { name: path.basename(scan.root), fileCount: scan.fileCount, totalBytes: scan.totalBytes, exeCandidates: scan.exeCandidates };
+  });
+  handle("developer:uploadBuild", async (options) => {
+    const gameId = requireGameId(options && options.gameId);
+    const version = requireText(options.version, "version", 32).trim();
+    const notes = options.notes ? requireText(options.notes, "release notes", 2000).trim() : undefined;
+    const entryPoint = options.entryPoint ? requireText(options.entryPoint, "start file", 260) : undefined;
+    if (!pickedFolder) throw new Error("Choose the game folder first.");
+    if (uploadAbort) throw new Error("An upload is already running.");
+    uploadAbort = new AbortController();
+    try {
+      const { limits } = await runtime.api.developerAccount();
+      const maxBytes = limits.demo_only ? limits.max_demo_build_mb * 1024 * 1024 : undefined;
+      const build = await uploadBuild({
+        api: runtime.api, gameId, folder: pickedFolder, version, notes, entryPoint, maxBytes, signal: uploadAbort.signal,
+        onProgress: (progress) => tell("upload:progress", { gameId, ...progress }),
+      });
+      return { build };
+    } finally {
+      uploadAbort = null;
+    }
+  });
+  handle("developer:cancelUpload", () => {
+    if (uploadAbort) uploadAbort.abort();
+    return { cancelled: true };
+  });
+  handle("developer:downloadSdkConfig", async (gameId) => {
+    const text = await runtime.api.sdkConfig(requireGameId(gameId));
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: path.join(app.getPath("documents"), "marec_config.gd"),
+      filters: [{ name: "GDScript", extensions: ["gd"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    fs.writeFileSync(result.filePath, text, "utf8");
+    return { path: result.filePath };
+  });
+
+  // Staff review. The store checks the person's roles on every call; these are just the doors.
+  handle("admin:studios", (status) => runtime.api.adminStudios(optionalStatus(status)));
+  handle("admin:verifyStudio", (studioId) => runtime.api.verifyStudio(requireId(studioId, "studio")));
+  handle("admin:games", (status) => runtime.api.adminGames(optionalStatus(status)));
+  handle("admin:transition", (gameId, action, reason) => {
+    requireText(action, "action", 40);
+    return runtime.api.transitionGame(requireGameId(gameId), action, reason ? requireText(reason, "reason", 500) : undefined);
+  });
   handle("library:list", () => runtime.service.library());
 
   // Friends. Requests and friends are named by id, people are added by friend code.
@@ -199,15 +327,28 @@ app.whenReady().then(() => {
   build();
   registerHandlers();
   createWindow();
+  queuedDeepLink = queuedDeepLink || deepLinkIn(process.argv) || null;
+  // The page needs a moment to load before it can hear the answer.
+  mainWindow.webContents.once("did-finish-load", () => {
+    const link = queuedDeepLink;
+    queuedDeepLink = null;
+    if (link) handleDeepLink(link);
+  });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+  // On Windows the link from the browser arrives as an argument of the second copy of the app.
+  handleDeepLink(deepLinkIn(argv));
+});
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
 });
 app.on("window-all-closed", () => app.quit());

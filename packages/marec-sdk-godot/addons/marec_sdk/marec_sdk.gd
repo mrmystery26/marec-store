@@ -24,7 +24,6 @@ const Verifier := preload("res://addons/marec_sdk/marec_verifier.gd")
 const Config := preload("res://addons/marec_sdk/marec_config.gd")
 const CLOCK_FILE := "user://marec_clock.dat"
 const TOKEN_WAIT_MS := 10000
-const PLACEHOLDER_GAME_ID := "00000000-0000-0000-0000-000000000000"
 const MESSAGES := {
 	"NETWORK_ERROR": "Could not reach the MAREC store to confirm this game. Check your internet connection and try again.",
 	"TOKEN_ALREADY_USED": "This launch was already used. Please start the game again from the MAREC Launcher.",
@@ -63,7 +62,7 @@ func _run() -> void:
 	if Config.EDITOR_BYPASS and OS.has_feature("editor"):
 		_allow({"kind": "editor", "editor": true, "user_id": ""})
 		return
-	if Config.GAME_ID == PLACEHOLDER_GAME_ID:
+	if Config.GAME_ID.is_empty() or Config.API_BASE.is_empty() or Config.PUBLIC_KEY_PEM.is_empty():
 		_deny("BAD_CONFIG", "The MAREC SDK has not been set up for this game (marec_config.gd).")
 		return
 

@@ -21,7 +21,7 @@ What exists now:
   (the last super administrator cannot be removed), browse the audit log with filters
 - Append-only audit log. On PostgreSQL a trigger blocks UPDATE, DELETE and TRUNCATE on it
 - Command-line tool to create the first super administrator
-- Studios: any user can create up to 3; staff verify them. Members have studio roles
+- Studios: developers can create up to 3; staff verify them. Members have studio roles
   (owner, manager, developer, finance) that decide who can edit content, change the price, submit
 - Game catalog: games with the nine blueprint states (draft, submitted, under review, changes
   requested, approved, scheduled, published, suspended, removed), categories, system requirements,
@@ -46,8 +46,30 @@ What exists now:
   Only published games from verified studios are visible
 - Tests (SQLite locally, PostgreSQL in CI), lint, secret scan, migration up/down check
 
-Not built yet (on purpose): email verification (needs an email provider), IP-based rate limiting,
-two-factor authentication for staff, malware scanning, paid purchases, offline play in the launcher, discounts, website, launcher, payments, SDK. See the blueprint for the order.
+Also built since then: **Sign in with Google**, emailed verification codes (Resend), **developer
+accounts** and **demo-only publishing** (see "Accounts, email and developers" below).
+
+Not built yet (on purpose): IP-based rate limiting, two-factor authentication inside the store for
+staff (use Google's 2-step verification on staff Google accounts), malware scanning, paid
+purchases, offline play in the launcher, discounts, website, payments. See the blueprint for the order.
+
+## Accounts, email and developers
+
+- **Sign in with Google** (Windows and Android). The app opens Google in the system browser, and
+  the API sends the player back with a one-time ticket that only that app can redeem (PKCE). Email
+  and password sign-up still works. Setup: `docs/SETUP_ACCOUNTS.md`.
+- **Email** goes through Resend (free plan: 3,000 emails a month, 100 a day). Only needed things are
+  sent: a 6-digit code to confirm an email address, a notice when a studio is verified, and a notice
+  when a game is approved, published or needs changes. Google accounts never need a code.
+- **Developer accounts.** A signed-in player with a verified email accepts the developer rules and
+  names a studio in the Publisher portal. The studio starts `pending`; a store administrator
+  verifies it (in the launcher's Review screen, or `python -m app.cli verify-studio --slug ...`),
+  and only then can it upload.
+- **Demos only for now** (`DEMO_ONLY=true`). Every new game is a free demo (price fixed at 0, marked
+  `release_kind: "demo"`), at most `DEMO_MAX_BUILD_MB` per build and `DEMO_MAX_GAMES_PER_STUDIO`
+  per studio. Every game is still reviewed by staff before it appears in the store.
+- **SDK file.** Each game downloads its own filled-in `marec_config.gd` from the Publisher portal
+  (`GET /v1/developer/games/{id}/sdk-config`).
 
 ## Layout
 
@@ -84,9 +106,12 @@ apps/launcher/                    Windows launcher (Electron). See apps/launcher
 tools/upload-build/               Command-line tool that uploads a game folder as a build
 packages/marec-sdk-godot/         Godot SDK (GDScript addon) that games use to check a launch
   app/modules/health.py           /v1/health, /v1/health/db
-  app/cli.py                      Operator commands (grant-role, revoke-role)
-  app/seed.py                     Demo data for previewing the store
-  alembic/                        Migrations (0001 users, 0002 roles + audit, 0003 studios + catalog, 0004 builds, 0005 entitlements, 0006 launch, 0007 build entry point)
+  app/cli.py                      Operator commands (grant-role, revoke-role, list-studios, verify-studio)
+  app/seed.py                     Creates the store's categories; removes old placeholder data
+  app/core/google.py              Talks to Google (code exchange, ID token checks)
+  app/core/email.py               Sends email through Resend; the messages
+  app/modules/auth/               also: Google sign-in, one-time tickets, emailed codes
+  alembic/                        Migrations (0001 users, 0002 roles + audit, 0003 studios + catalog, 0004 builds, 0005 entitlements, 0006 launch, 0007 build entry point, 0008 friends, 0009 Google sign-in + developers + demos)
   tests/                          pytest suite
   .env.example                    Variable names, no secrets
 ```
@@ -112,25 +137,27 @@ curl -s -X POST localhost:8000/v1/auth/login -H 'Content-Type: application/json'
   -d '{"email":"me@example.com","password":"a-long-test-password"}'
 ```
 
-Copy the `access_token` from the login response, then:
+Read the `access_token` out of the login response into a shell variable and use it:
 
 ```
-curl -s localhost:8000/v1/me -H 'Authorization: Bearer PASTE_ACCESS_TOKEN'
+TOKEN=$(curl -s -X POST localhost:8000/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"a-long-test-password"}' \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')
+
+curl -s localhost:8000/v1/me -H "Authorization: Bearer $TOKEN"
 ```
 
-## Preview the store with demo data
+## Prepare the database
 
 ```
 cd infra
 docker compose exec api python -m app.seed
 ```
 
-This adds 8 categories and a verified "MAREC Demo Studio" with 6 clearly labelled placeholder
-games (two are free). Then open `http://localhost:8000/docs` (in Codespaces, open port 8000 from
-the Ports tab and add `/docs`) and try `GET /v1/games`, `GET /v1/games/{slug}` and
-`GET /v1/categories`. Remove everything again with `python -m app.seed --remove`.
-
-The seed command refuses to run when `ENVIRONMENT=production`. There are no game images yet.
+This adds the 8 store categories (safe to repeat). It never adds made-up games: real games come
+from developers (see below). If an older version of this project loaded the made-up "MAREC Demo
+Studio" games, `python -m app.seed --remove-placeholders` deletes them; the hosted start script runs
+both commands on every start.
 
 ## Uploading a game build (development)
 
@@ -208,9 +235,9 @@ Lives in `apps/launcher`; its README explains how to get the installer from GitH
 to try a real game end to end. Builds now carry an **entry point** (the `.exe` the launcher starts).
 It is inferred when exactly one `.exe` sits at the top of the build, otherwise send `entry_point`.
 
-`python -m app.seed --test-game you@example.com` creates a draft game you own, and
-`python -m app.seed --publish launcher-test-game` publishes it once a build is ready. Both refuse to
-run in production.
+To try it end to end: sign in, create a developer account in the **Publisher portal**, get the
+studio verified, create a demo, upload the exported game folder from **Builds**, submit it, and
+approve and publish it from the **Review** screen (or the admin API).
 
 ## The Android app
 
@@ -219,20 +246,31 @@ to the same API, so accounts and libraries are shared. Windows games show as Win
 phone. GitHub builds the APK for you; see `docs/BUILD_ANDROID.md`, `docs/ANDROID_SIGNING.md` and
 `docs/PLATFORM_COMPATIBILITY.md`. Android builds of games need backend support that does not exist yet.
 
-## Typical flow (in /docs or with curl)
+## Typical flow
 
-1. Developer registers, creates a studio (`POST /v1/developer/studios`). It starts as `pending`.
-2. A store admin verifies it (`POST /v1/admin/studios/{id}/verify`).
-3. Developer creates a game, fills it in (`PATCH /v1/developer/games/{id}`) and submits it.
-4. A moderator reviews it (`POST /v1/admin/games/{id}/transition` with an action) and publishes it.
-5. It appears in `GET /v1/games`.
+1. A person signs in with Google (or registers with email and password and confirms the emailed
+   code), then opens the Publisher portal and creates a developer account
+   (`POST /v1/developer/account`) with a studio name. The studio starts as `pending`.
+2. A store administrator verifies it (`POST /v1/admin/studios/{id}/verify`, the Review screen, or
+   `python -m app.cli verify-studio --slug ...`). The developer gets an email.
+3. The developer creates a demo, fills it in (`PATCH /v1/developer/games/{id}`), uploads a build
+   and submits it.
+4. A moderator reviews it (`POST /v1/admin/games/{id}/transition` with an action, or the Review
+   screen) and publishes it. The developer gets an email for each decision.
+5. It appears in `GET /v1/games`, marked as a demo.
 
 Staff roles are given with the command below. A store admin is needed to create categories.
 
 ## Create the first super administrator
 
-Staff accounts cannot be created through the API (that would be a way in for attackers). Register
-a normal account first, then, in a terminal where `DATABASE_URL` points at the right database:
+Staff accounts cannot be created through the API (that would be a way in for attackers). Two ways:
+
+1. **Set `BOOTSTRAP_ADMIN_EMAILS`** to your own email address (several can be separated by
+   commas). When you next sign in with that address **and it is verified** (a Google account always
+   is), you become super administrator. An address registered with a password but never verified
+   gets nothing, so nobody can claim yours by registering it first. The grant is audit-logged.
+   This is how to do it on hosting without a shell, such as Render's free plan.
+2. In a terminal where `DATABASE_URL` points at the right database:
 
 ```
 cd services/api
@@ -241,10 +279,10 @@ python -m app.cli grant-role --email you@example.com --role super_admin
 
 With the Docker setup, run it inside the API container instead:
 `docker compose exec api python -m app.cli grant-role --email you@example.com --role super_admin`.
-After that, log in and use the admin endpoints (see /docs). Every role change is audit-logged.
+Every role change is audit-logged.
 
-**Before real use:** admin endpoints are protected by role only. Two-factor authentication for
-staff is NOT built yet and must exist before this runs in production with real data.
+**Before real use:** admin endpoints are protected by role only, and the store itself has no second
+factor for staff yet. Turn on Google's 2-step verification for every staff Google account.
 
 ## Run the tests (no Docker or PostgreSQL needed)
 
@@ -277,6 +315,13 @@ To test against PostgreSQL, set `TEST_DATABASE_URL` to a database whose name con
 | STORAGE_LOCAL_DIR | Where local files go | ./.storage |
 | PUBLIC_API_BASE_URL | Address used inside local upload links | http://localhost:8000 |
 | S3_ENDPOINT_URL, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_REGION | R2 connection | none |
+| GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET | Sign in with Google (set both or neither). Redirect URI: `<PUBLIC_API_BASE_URL>/v1/auth/google/callback` | off |
+| APP_REDIRECT_URI | Where the browser returns to the app after Google (fixed, never taken from a request) | marecstore://auth |
+| RESEND_API_KEY, EMAIL_FROM | Email through Resend. `EMAIL_FROM` must use a domain verified in Resend | off |
+| ADMIN_NOTIFY_EMAIL | Gets "a developer is waiting" emails | none |
+| BOOTSTRAP_ADMIN_EMAILS | Verified emails that become super administrators on sign-in | none |
+| DEMO_ONLY | Developers may only publish free demos | true |
+| DEMO_MAX_BUILD_MB, DEMO_MAX_GAMES_PER_STUDIO | Demo limits | 1024, 5 |
 
 Generate a real secret: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
 
@@ -312,7 +357,6 @@ Never change production tables by hand. Add a new migration file instead.
 - `POST /v1/launch/redeem` has no rate limit yet (the token is the credential, so abuse needs a valid
   token, but limits are still needed). Offline leases cannot be recalled before they expire
   (a refund or ban takes effect at the next online check).
-- The Godot SDK that checks these tokens is not written. It is deliberately not the next step.
 - Friends: there is no online status or "now playing" (that needs presence tracking), no blocking or
   reporting, and no notification when a request arrives (the Friends page shows it when opened).
   Friend codes are random (about 8.5 trillion possibilities) but guessing is not rate limited yet,

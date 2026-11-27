@@ -47,6 +47,9 @@ class UserOut(BaseModel):
     email_verified: bool
     status: str
     created_at: datetime
+    # Staff roles (for example "game_moderator"). Empty for players. The app uses this only to
+    # decide which screens to show; every action is still checked on the server.
+    roles: list[str] = []
 
 
 class SessionOut(BaseModel):
@@ -55,3 +58,30 @@ class SessionOut(BaseModel):
     last_seen_at: datetime
     user_agent: str | None
     current: bool
+
+
+class ProvidersOut(BaseModel):
+    google: bool
+    email_codes: bool
+
+
+class GoogleStartRequest(BaseModel):
+    # base64url(SHA-256(code_verifier)): the app keeps the verifier, so only it can finish.
+    code_challenge: str = Field(min_length=43, max_length=43)
+
+
+class GoogleStartResponse(BaseModel):
+    auth_url: str
+
+
+class GoogleExchangeRequest(BaseModel):
+    ticket: str = Field(min_length=20, max_length=128)
+    code_verifier: str = Field(min_length=43, max_length=128)
+
+
+class SendCodeResponse(BaseModel):
+    expires_in_minutes: int
+
+
+class VerifyEmailRequest(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")

@@ -10,14 +10,22 @@ Actions on your Windows PC.
 
 ## What it does
 
-- Log in, or create an account, with your store account (the session is kept encrypted with your
-  Windows account).
+- **Continue with Google**, or log in / create an account with email and password (the session is
+  kept encrypted with your Windows account). Google opens in your normal browser, never inside
+  the launcher, and the browser hands you back to the launcher through a `marecstore://` link.
+  The installed launcher registers that link; the portable `MarecStore.exe` registers it the first
+  time it runs. Confirm your email with a code when the store asks for it.
 - Store: home with a featured carousel, browse and search games, filter by genre, price and
   release date, game pages with system requirements. Free games can be added to your library.
 - Downloads: progress, speed and time left, a queue (one game at a time by default), pause and
   resume, and a history of installs on this PC.
 - Wishlist, notifications and "recently played" are kept on this PC only.
-- Publisher portal: lists your studios and their games, and registers a new studio.
+- Publisher portal: create a developer account, then create **free demos**, fill in their
+  details, **upload the exported Windows game from a folder** (hashed and sent as a stream, with
+  progress and cancel), download the game's filled-in `marec_config.gd` for the Godot SDK, and send
+  the demo for review. Studios must be verified by MAREC before uploading.
+- Review (staff only): verify new studios, move submitted demos through review and publish them,
+  and suspend or remove live ones. Shown only to accounts with a staff role.
 - Library: shows the games you own, with Install, Update, Play, Verify files and Uninstall.
 - Install: fetches a signed install plan, **verifies the manifest signature**, then downloads each
   file in 8 MB chunks, checking every chunk's SHA-256. If the connection drops or you cancel, the
@@ -30,8 +38,10 @@ Actions on your Windows PC.
 
 - Offline play (leases), automatic updates of the launcher, incremental game updates (an update
   downloads the whole game again), speed limits, starting with Windows.
+- Cover images, screenshots and trailers for games: a game without a cover shows its initials on a
+  coloured tile.
 - Paid purchases. "Buy now" explains that payments are not open and changes nothing.
-- Things the store does not send yet, so the window shows placeholders or nothing: artwork,
+- Things the store does not send yet, so the window shows nothing for them: artwork,
   screenshots and trailers, discounts, popularity, upcoming releases, USD prices, regional
   availability. Windows desktop notifications do not exist yet. Friends work with friend codes and requests, but there is no online status or "now playing".
 - The installer is **not code-signed**, so Windows SmartScreen will warn you ("More info", "Run
@@ -77,18 +87,15 @@ You need the backend reachable from your Windows PC.
    `PUBLIC_API_BASE_URL` to the address of the forwarded port 8000 (for example
    `https://NAME-8000.app.github.dev`) and set that port's visibility to **Public** in the Ports tab.
    Create a store account at `/docs` (`POST /v1/auth/register`).
-2. **A game to upload to:** `docker compose exec api python -m app.seed --test-game you@example.com`
-   prints a game id.
-3. **Upload a build** (on any machine with Node 20+, from this repository):
-
-   ```
-   set MAREC_PASSWORD=your-password
-   node tools/upload-build/upload-build.js --api https://NAME-8000.app.github.dev ^
-        --email you@example.com --game GAME_ID --version 1.0.0 --dir C:\path\to\export
-   ```
-
-   `export` is a folder with your game's Windows export (for Godot: the `.exe` and `.pck`).
-4. **Publish it:** `docker compose exec api python -m app.seed --publish launcher-test-game`
+2. **A game to upload to:** in the launcher open the **Publisher portal**, create a developer
+   account (your email must be verified), and wait for the studio to be verified (the store owner
+   does this in the **Review** screen, or with `python -m app.cli verify-studio --slug ...`). Then
+   create a demo there.
+3. **Upload a build** in the Publisher portal under **Builds**: pick the folder with your game's
+   Windows export (for Godot: the `.exe` and `.pck`), a version, and press Upload. (The command-line
+   tool in `tools/upload-build` still works if you prefer it.)
+4. **Publish it:** submit the demo from the Publisher portal, then approve and publish it from the
+   **Review** screen.
 5. **Add it to your library:** open its page in the launcher's Store and choose **Add to library**
    (free games only), or in `/docs` log in and `POST /v1/me/library/GAME_ID`.
 6. **Launcher:** open it, go to **Settings**, set the store server to the same address, save, log
@@ -119,23 +126,21 @@ as a Node module, which is how the tests load them.
 css/            tokens (colours, fonts), layout, components, views
 js/format.js        sizes, speeds, kwacha prices
 js/data.js          THE DATA LAYER: the only place views get games from
-js/sample-data.js   fictional games for the sample preview (clearly marked, never installable)
+js/google-signin.js  Sign in with Google: PKCE, the marecstore:// callback, who may be opened
 js/downloads.js     queue, pause/resume, speed and time left
 js/local-store.js   wishlist, notifications, history, preferences (this PC only)
 js/components.js    artwork, cards, shelves, form controls, dialogs
-js/views-*.js       home, store, game page, library, downloads, account, settings, publisher
+js/views-*.js       home, store, game page, library, downloads, account, settings, publisher, review
 app.js              state, routing, sidebar and top bar, and the actions views can trigger
 ```
 
-**Real or not.** Store pages, sign-up, adding free games, the library, installs and the publisher
-list use the real store API through the bridge. Everything the API cannot do yet is either kept on
-this PC (wishlist, notifications, history) or comes from sample data. Sample data is behind
-**Settings → Preview the store with sample games**; while it is on, a banner says so and sample
-games cannot be bought, added or installed. To connect a feature later, fill in the matching
-field in `js/data.js` (`fromApi`); the views already read it. `capabilities()` there is the list of
+**Real or not.** Everything on screen comes from the real store API through the bridge, or is kept
+on this PC (wishlist, notifications, history). Nothing is made up: an empty store is shown as
+empty. To connect a feature later, fill in the matching field in `js/data.js` (`fromApi`); the
+views already read it. `capabilities()` there is the list of
 what the store can do today.
 
-**Artwork.** Games without artwork show a plain labelled placeholder from `components.artwork`.
+**Artwork.** Games without artwork show their initials on a coloured tile from `components.artwork`.
 When the API starts sending `artwork.cover` / `artwork.hero`, add the image host to `img-src` in
 `src/renderer/index.html`, otherwise the window's security policy will block it (the same goes for
 `media-src` if trailers are added).

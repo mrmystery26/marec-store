@@ -4,20 +4,26 @@ The Android and Windows apps talk to the store API, and `localhost` only works o
 that runs it. This hosts the API and its database on Render so the apps can reach it from anywhere.
 Everything below can be done in a phone browser.
 
-This sets up **demo mode**: the six demo games are loaded, game builds are kept on temporary disk
-(they vanish on restart), and no signing keys are set. Do not use it for real customers or real
-game builds yet (see "Going to production").
+This sets up the real store: production mode, a Cloudflare R2 bucket for game builds, Sign in with
+Google, email through Resend, and signing keys. Do the one-time setup in `SETUP_ACCOUNTS.md` first
+(or at least have its values ready), because Render asks for them when you apply the blueprint and
+the API refuses to start in production without them.
 
 ## Steps
 
 1. Open https://render.com in your browser and sign up with GitHub. Allow it to see `marec-store`.
 2. Dashboard, then **New**, then **Blueprint**, pick `mrmystery26/marec-store`, and apply it. Render
-   reads `render.yaml` and creates the API (`marec-store-api`) and the database (`marec-db`).
+   reads `render.yaml`, creates the API (`marec-store-api`) and the database (`marec-db`), and asks
+   you for each secret value marked in the file. If you already applied an older version of the
+   blueprint, open the blueprint and **Sync**: it asks for the new values, and the service restarts
+   in production mode.
 3. Wait for the first deploy to finish (a few minutes). Open the service and copy its address. It
    looks like `https://marec-store-api.onrender.com`.
 4. Check it in your browser:
    - `<address>/v1/health` should show `"status":"ok"`.
-   - `<address>/v1/games` should list the 6 demo games.
+   - `<address>/v1/auth/providers` should show `{"google":true,"email_codes":true}`.
+   - `<address>/v1/games` starts empty: real games come from developers. (Any made-up demo games
+     left by an older version are removed automatically on start.)
 5. Tell the apps where it is, either way:
    - **Right now, no rebuild:** open the Android app and type the address on the first-start screen.
    - **Built in:** on GitHub open Settings, Secrets and variables, Actions, Variables, and add
@@ -29,17 +35,8 @@ game builds yet (see "Going to production").
 - Free web services on Render go to sleep when idle, so the first request after a quiet period can
   take about a minute. Render's free plans have limits (for example on the database) that can
   change, so check https://render.com/pricing for the current terms.
-- Each start runs the database migrations. The demo games are only added once (turn them off by
-  setting `SEED_DEMO` to `false` in the service's Environment tab).
+- Each start runs the database migrations, makes sure the store's categories exist, and removes old
+  placeholder games if any are left.
 - The API address must be `https://`. The release Android build refuses plain `http://`.
-
-## Going to production
-
-Set `ENVIRONMENT=production`. The API then refuses to start until all of this is set:
-
-- `JWT_SECRET`: random, at least 32 characters (Render generates one for you).
-- `STORAGE_BACKEND=s3` with `S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` and
-  `S3_SECRET_ACCESS_KEY` (any S3-compatible bucket, for example Cloudflare R2).
-- `MANIFEST_SIGNING_KEY` and `LAUNCH_SIGNING_KEY`, made with `python -m app.cli gen-signing-key`
-  and `python -m app.cli gen-launch-key` and kept secret.
-- `PUBLIC_API_BASE_URL`: the public `https://` address of the API.
+- Keep `MANIFEST_SIGNING_KEY` and `LAUNCH_SIGNING_KEY` forever. Changing either one stops every
+  installed game from verifying.

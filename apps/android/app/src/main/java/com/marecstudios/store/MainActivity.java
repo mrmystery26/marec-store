@@ -13,6 +13,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import org.json.JSONObject;
+
 import androidx.webkit.WebViewAssetLoader;
 
 /**
@@ -22,6 +24,8 @@ import androidx.webkit.WebViewAssetLoader;
 public class MainActivity extends Activity {
     private static final String TAG = "MarecStore";
     private WebView webView;
+    // A marecstore:// link that arrived while the page was still loading.
+    private String pendingLink;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,6 +73,11 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "page-loaded " + url);
+                if (pendingLink != null) {
+                    String link = pendingLink;
+                    pendingLink = null;
+                    deliverLink(link);
+                }
             }
 
             @Override
@@ -80,7 +89,43 @@ public class MainActivity extends Activity {
         });
 
         webView.addJavascriptInterface(new NativeBridge(this, webView), "MarecAndroid");
+        pendingLink = linkFrom(getIntent());
         webView.loadUrl(Hosts.APP_ORIGIN + "/assets/index.html");
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String link = linkFrom(intent);
+        if (link != null) {
+            deliverLink(link);
+        }
+    }
+
+    /** The marecstore://auth address the store sends the browser to after Google, or null. */
+    private static String linkFrom(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return null;
+        }
+        Uri data = intent.getData();
+        if (data == null) {
+            return null;
+        }
+        String link = data.toString();
+        return Hosts.isSignInLink(link) ? link : null;
+    }
+
+    /** Tells the page. The page only acts on it if it started a sign-in itself. */
+    private void deliverLink(String link) {
+        final String script = "window.__marecNative && window.__marecNative.on('deeplink',''," +
+                "{url:" + JSONObject.quote(link) + "});";
+        webView.post(new Runnable() {
+            @Override
+            public void run() {
+                webView.evaluateJavascript(script, null);
+            }
+        });
     }
 
     @Override

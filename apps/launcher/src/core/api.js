@@ -19,7 +19,7 @@ class MarecApi {
     this.refreshing = null;
   }
 
-  async request(method, pathname, { body, auth = true, query } = {}) {
+  async request(method, pathname, { body, auth = true, query, text = false } = {}) {
     const send = async () => {
       const url = new URL(this.baseUrl + pathname);
       for (const [key, value] of Object.entries(query || {})) url.searchParams.set(key, value);
@@ -44,10 +44,11 @@ class MarecApi {
       await this.refresh();
       response = await send();
     }
-    return this.parse(response);
+    return this.parse(response, text);
   }
 
-  async parse(response) {
+  /** `raw` answers with the body as plain text (for files such as the SDK config). */
+  async parse(response, raw = false) {
     const text = await response.text();
     let data = null;
     try {
@@ -55,6 +56,7 @@ class MarecApi {
     } catch {
       data = null;
     }
+    if (response.ok && raw) return text;
     if (!response.ok) {
       const e = (data && data.error) || {};
       throw new ApiError(
@@ -99,6 +101,29 @@ class MarecApi {
     });
     this.tokenStore.save({ accessToken: data.access_token, refreshToken: data.refresh_token });
     return this.me();
+  }
+
+  // ---- Sign in with Google, and confirming an email address
+  providers() {
+    return this.request("GET", "/v1/auth/providers", { auth: false });
+  }
+  googleStart(codeChallenge) {
+    return this.request("POST", "/v1/auth/google/start", { auth: false, body: { code_challenge: codeChallenge } });
+  }
+  /** Trades the one-time ticket (plus the app's secret verifier) for a session. */
+  async googleExchange(ticket, codeVerifier) {
+    const data = await this.request("POST", "/v1/auth/google/exchange", {
+      auth: false,
+      body: { ticket, code_verifier: codeVerifier },
+    });
+    this.tokenStore.save({ accessToken: data.access_token, refreshToken: data.refresh_token });
+    return this.me();
+  }
+  sendEmailCode() {
+    return this.request("POST", "/v1/auth/email/send-code");
+  }
+  verifyEmail(code) {
+    return this.request("POST", "/v1/auth/email/verify", { body: { code } });
   }
 
   async logout() {
@@ -162,6 +187,54 @@ class MarecApi {
   }
   studioGames(studioId, limit = 50, offset = 0) {
     return this.request("GET", `/v1/developer/studios/${studioId}/games`, { query: { limit, offset } });
+  }
+
+  // ---- Developer account, demos and builds
+  developerAccount() {
+    return this.request("GET", "/v1/developer/account");
+  }
+  registerDeveloper(studioName, termsVersion) {
+    return this.request("POST", "/v1/developer/account", {
+      body: { studio_name: studioName, accept_terms: true, terms_version: termsVersion },
+    });
+  }
+  createGame(studioId, title) {
+    return this.request("POST", `/v1/developer/studios/${studioId}/games`, { body: { title } });
+  }
+  developerGame(gameId) {
+    return this.request("GET", `/v1/developer/games/${gameId}`);
+  }
+  updateGame(gameId, changes) {
+    return this.request("PATCH", `/v1/developer/games/${gameId}`, { body: changes });
+  }
+  submitGame(gameId) {
+    return this.request("POST", `/v1/developer/games/${gameId}/submit`);
+  }
+  builds(gameId) {
+    return this.request("GET", `/v1/developer/games/${gameId}/builds`);
+  }
+  createBuild(gameId, body) {
+    return this.request("POST", `/v1/developer/games/${gameId}/builds`, { body });
+  }
+  completeBuild(buildId) {
+    return this.request("POST", `/v1/developer/builds/${buildId}/complete`);
+  }
+  sdkConfig(gameId) {
+    return this.request("GET", `/v1/developer/games/${gameId}/sdk-config`, { text: true });
+  }
+
+  // ---- Staff review (the server checks the roles; these only work for staff)
+  adminStudios(status) {
+    return this.request("GET", "/v1/admin/studios", { query: { ...(status ? { status } : {}), limit: 50 } });
+  }
+  verifyStudio(studioId) {
+    return this.request("POST", `/v1/admin/studios/${studioId}/verify`);
+  }
+  adminGames(status) {
+    return this.request("GET", "/v1/admin/games", { query: { ...(status ? { status } : {}), limit: 50 } });
+  }
+  transitionGame(gameId, action, reason) {
+    return this.request("POST", `/v1/admin/games/${gameId}/transition`, { body: { action, ...(reason ? { reason } : {}) } });
   }
 
   // ---- Friends (people are added with a friend code, never by email or name) ----

@@ -42,6 +42,17 @@ def create_account(client, db_session, email, roles=()):
     return user, login_response.json()
 
 
+def make_developer(db_session, user):
+    """Gives a user a verified email and a developer profile, as if they had registered."""
+    from app.core.db import utcnow
+    from app.modules.developer.models import DeveloperProfile
+
+    user.email_verified_at = utcnow()
+    db_session.merge(user)
+    db_session.add(DeveloperProfile(user_id=user.id, terms_version="2026-11"))
+    db_session.commit()
+
+
 # ---- direct-to-database builders (fast setup for catalog tests) ----
 
 from datetime import timedelta  # noqa: E402
@@ -91,6 +102,7 @@ def make_game(
     age_minutes=0,
     release_at=None,
     with_build=True,
+    release_kind="full",
 ):
     """A complete game (ready to submit) in the given status."""
     game = Game(
@@ -101,6 +113,7 @@ def make_game(
         summary=f"{title} summary.",
         description=f"{title} full description.",
         status=status,
+        release_kind=release_kind,
         price_minor=price,
         age_rating="12+",
         release_at=release_at,

@@ -1,25 +1,17 @@
 "use strict";
-// The data layer. Views never talk to the launcher bridge or to sample data directly: they ask
-// this module for games, and it decides where they come from.
-//
-//   live    -> the real store API through the launcher bridge (window.marec)
-//   sample  -> fictional games from sample-data.js, only when the player turns the preview on
-//
-// Both return the same "Game" shape (see fromApi below), so connecting more of the real API later
-// only means filling in more fields here, not changing any view.
+// The data layer. Views never talk to the launcher bridge directly: they ask this module for games.
+// Everything comes from the real store API through the launcher bridge (window.marec), shaped as the
+// "Game" the views use (see fromApi below), so connecting more of the API later only means filling in
+// more fields here, not changing any view.
 (function (host) {
   const dep = (name) => (typeof require === "function" ? require(`./${name}`) : host.MarecUI[name]);
-  const sample = dep("sample-data");
   const { normalizePlatforms } = dep("platform");
 
   const DAY = 86_400_000;
   const RELEASE_WINDOWS = { "30d": 30 * DAY, "180d": 180 * DAY, year: 365 * DAY };
 
-  /** What each source can really do today. Views use this to say so instead of faking it. */
-  const CAPABILITIES = {
-    live: { popularity: false, discounts: false, upcoming: false, usd: false, regions: false, media: false, artwork: false },
-    sample: { popularity: true, discounts: true, upcoming: true, usd: true, regions: true, media: true, artwork: false },
-  };
+  /** What the store can really do today. Views use this to say so instead of faking it. */
+  const CAPABILITIES = { popularity: false, discounts: false, upcoming: false, usd: false, regions: false, media: false, artwork: false };
 
   // Every call to the launcher returns {ok, data} or {ok:false, error}; this turns errors into throws.
   async function unwrap(promise) {
@@ -43,6 +35,7 @@
       publisher: null, // the store has one "studio" for now; shown as developer and publisher
       categories: raw.categories || [],
       isFree: Boolean(raw.is_free),
+      isDemo: raw.release_kind === "demo",
       price: { minor: raw.price_minor, currency: raw.currency || "MWK", original_minor: null },
       prices: null,
       ageRating: raw.age_rating || null,
@@ -59,7 +52,6 @@
       featured: false,
       media: [],
       artwork: null,
-      sample: false,
     };
   }
 
@@ -97,10 +89,7 @@
     return out;
   }
 
-  function createData({ api, local, now = Date.now }) {
-    const useSample = () => Boolean(local.prefs().sampleStore);
-    let sampleGames = null;
-    const samples = () => (sampleGames ||= sample.buildSampleGames(now()));
+  function createData({ api, now = Date.now }) {
     const needsClientFilter = (p) =>
       ["discounted", "upcoming"].includes(p.tab) || (p.release && p.release !== "any");
 
@@ -117,11 +106,9 @@
     }
 
     return {
-      mode: () => (useSample() ? "sample" : "live"),
-      capabilities: () => CAPABILITIES[useSample() ? "sample" : "live"],
+      capabilities: () => CAPABILITIES,
 
       async categories() {
-        if (useSample()) return sample.CATEGORIES;
         return unwrap(api.categories());
       },
 
@@ -138,8 +125,6 @@
           return { items: sorted.slice(offset, offset + limit), total: sorted.length, offset, limit };
         };
 
-        if (useSample()) return finish(clientFilter(samples(), params, now()));
-
         const query = {
           q: params.q, category: params.category, free: params.tab === "free" ? true : undefined,
           min_price_minor: params.minPrice ?? undefined, max_price_minor: params.maxPrice ?? undefined,
@@ -154,46 +139,17 @@
       },
 
       async game(slug) {
-        if (useSample()) {
-          const found = samples().find((g) => g.slug === slug);
-          if (!found) {
-            const error = new Error("This game is not in the sample store.");
-            error.code = "GAME_NOT_FOUND";
-            throw error;
-          }
-          return found;
-        }
         return fromApi(await unwrap(api.game(slug)), now());
       },
 
       /** Everything the home page shows, in one go. Shelves with nothing in them are left out. */
       async home() {
-        if (useSample()) {
-          const all = samples();
-          const released = all.filter((g) => !g.upcoming);
-          const byNewest = [...released].sort(SORTERS.newest);
-          const byPopular = [...released].sort(SORTERS.popular);
-          return {
-            mode: "sample",
-            featured: all.filter((g) => g.featured),
-            trending: byPopular.slice(0, 8),
-            recent: byNewest.slice(0, 8),
-            offers: released.filter(isDiscounted),
-            free: released.filter((g) => g.isFree),
-            discover: {
-              recommended: [...released].sort((a, b) => a.order - b.order).slice(0, 6),
-              popular: byPopular.slice(0, 6),
-              upcoming: all.filter((g) => g.upcoming),
-            },
-          };
-        }
         const [newest, free] = await Promise.all([
           unwrap(api.games({ sort: "newest", limit: 24, offset: 0 })),
           unwrap(api.games({ free: true, sort: "newest", limit: 12, offset: 0 })),
         ]);
         const recent = newest.items.map((raw) => fromApi(raw, now()));
         return {
-          mode: "live",
           featured: recent.slice(0, 5),
           trending: [], // the store keeps no play counts yet
           recent: recent.slice(0, 12),
@@ -204,10 +160,7 @@
         };
       },
 
-      /** The made-up people shown while the sample-store preview is on. */
-      sampleFriends: () => sample.SAMPLE_FRIENDS,
-
-      /** Everything the Friends page needs from the store, in one go (live store only). */
+      /** Everything the Friends page needs from the store, in one go. */
       async social() {
         const [list, requests, mine] = await Promise.all([
           unwrap(api.friends()),

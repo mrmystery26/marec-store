@@ -7,6 +7,7 @@ import app.modules.audit.models  # noqa: F401  (registers tables on Base.metadat
 import app.modules.auth.models  # noqa: F401
 import app.modules.builds.models  # noqa: F401
 import app.modules.catalog.models  # noqa: F401
+import app.modules.developer.models  # noqa: F401
 import app.modules.friends.models  # noqa: F401
 import app.modules.launch.models  # noqa: F401
 import app.modules.library.models  # noqa: F401

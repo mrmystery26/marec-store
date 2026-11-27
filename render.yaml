@@ -1,9 +1,9 @@
 # Render Blueprint: hosts the MAREC STORE API and its PostgreSQL database.
 # Step-by-step (works from a phone browser): docs/DEPLOY_RENDER.md
+# Accounts, email, storage and keys: docs/SETUP_ACCOUNTS.md
 #
-# This is DEMO mode (ENVIRONMENT=local): builds are kept on temporary disk, no signing keys are
-# set, and the demo games are loaded. Do not put real customer data or real game builds here.
-# For a real launch, see "Going to production" in docs/DEPLOY_RENDER.md.
+# Every entry marked `sync: false` is a secret or an address that belongs to you. Render asks for
+# it when you apply the blueprint. None of them are stored in this repository.
 databases:
   - name: marec-db
     databaseName: marec
@@ -21,16 +21,56 @@ services:
     healthCheckPath: /v1/health
     envVars:
       - key: ENVIRONMENT
-        value: local
+        value: production
       - key: DATABASE_URL
         fromDatabase:
           name: marec-db
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      # The public https address of this API, for example https://api.yourdomain.com
+      - key: PUBLIC_API_BASE_URL
+        sync: false
+
+      # Where game builds are kept: a Cloudflare R2 bucket (S3 compatible).
       - key: STORAGE_BACKEND
-        value: local
-      - key: STORAGE_LOCAL_DIR
-        value: /tmp/marec-storage
-      - key: SEED_DEMO
+        value: s3
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+
+      # Keys that sign builds and launches (made with `python -m app.cli gen-signing-key` and
+      # `python -m app.cli gen-launch-key`). Keep them forever: changing them breaks installs.
+      - key: MANIFEST_SIGNING_KEY
+        sync: false
+      - key: LAUNCH_SIGNING_KEY
+        sync: false
+
+      # Sign in with Google (a "Web application" OAuth client in Google Cloud).
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
+      # Email through Resend. EMAIL_FROM must use a domain verified in Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Your own Google address: it becomes the store's super administrator when you sign in.
+      - key: BOOTSTRAP_ADMIN_EMAILS
+        sync: false
+      # Where "a developer is waiting for verification" emails go.
+      - key: ADMIN_NOTIFY_EMAIL
+        sync: false
+
+      # Developers may only upload free demos for now.
+      - key: DEMO_ONLY
         value: "true"

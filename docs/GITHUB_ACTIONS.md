@@ -63,7 +63,7 @@ In your repository: **Settings, Secrets and variables, Actions**.
 
 | Name | Meaning |
 | --- | --- |
-| `MAREC_API_BASE_URL` | The store server both apps use by default, for example `https://api.example.com`. If unset, the Windows app defaults to `http://localhost:8000` and the Android app asks for an address on first start. |
+| `MAREC_API_BASE_URL` | The store server both apps use by default, the public https address of your API (the same as `PUBLIC_API_BASE_URL` on the server). If unset, the Windows app defaults to `http://localhost:8000` and the Android app asks for an address on first start. |
 | `ANDROID_APPLICATION_ID` | The Android app id. Default `com.marecstudios.store`. Do not change it after you publish. |
 
 **Secrets** (for signed Android release builds, see `ANDROID_SIGNING.md`):

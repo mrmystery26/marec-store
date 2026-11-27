@@ -11,6 +11,7 @@ from tests.helpers import (
     create_account,
     make_category,
     make_build,
+    make_developer,
     make_game,
     make_studio,
 )
@@ -48,7 +49,8 @@ def patch(client, tokens, game_id, body):
 
 
 def test_create_and_list_studios(client, db_session):
-    _, tokens = create_account(client, db_session, "dev@example.com")
+    user, tokens = create_account(client, db_session, "dev@example.com")
+    make_developer(db_session, user)
     first = create_studio(client, tokens)
     assert first.status_code == 201
     assert first.json()["slug"] == "zomba-games"
@@ -62,7 +64,8 @@ def test_create_and_list_studios(client, db_session):
 
 
 def test_a_user_can_own_at_most_three_studios(client, db_session):
-    _, tokens = create_account(client, db_session, "dev@example.com")
+    user, tokens = create_account(client, db_session, "dev@example.com")
+    make_developer(db_session, user)
     for number in range(3):
         assert create_studio(client, tokens, f"Studio {number}").status_code == 201
     fourth = create_studio(client, tokens, "Studio 4")

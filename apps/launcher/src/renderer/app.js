@@ -16,22 +16,26 @@
   const lib = dep("views-library");
   const account = dep("views-account");
   const { publisher } = dep("views-publisher");
+  const { review } = dep("views-review");
   const { search: searchView } = dep("views-search");
   const { createPlatform } = dep("platform");
   const buildInfo = dep("build-info");
 
   const VIEWS = {
     home, store, search: searchView, game, library: lib.library, downloads: lib.downloads, wishlist: lib.wishlist,
-    friends: lib.friends, profile: account.profile, settings: account.settings, publisher,
+    friends: lib.friends, profile: account.profile, settings: account.settings, publisher, review,
   };
+  // People who may use the Review screen. The store checks the role again on every request.
+  const REVIEW_ROLES = ["super_admin", "store_admin", "game_moderator"];
+  const canReview = (user) => Boolean(user && Array.isArray(user.roles) && user.roles.some((role) => REVIEW_ROLES.includes(role)));
   const NAV = [
     ["home", "Home", "home"], ["store", "Store", "store"], ["library", "Library", "library"],
     ["downloads", "Downloads", "download"], ["wishlist", "Wishlist", "heart"], ["friends", "Friends", "users"],
   ];
   // Phone tab bar. Wishlist, Downloads and Settings are reached from the Profile tab.
   const TABS = [["home", "Home", "home"], ["store", "Discover", "compass"], ["search", "Search", "search"], ["library", "Library", "library"], ["profile", "Profile", "user"]];
-  const TAB_OF = { home: "home", store: "store", game: "store", search: "search", library: "library", profile: "profile", settings: "profile", downloads: "profile", wishlist: "profile", friends: "profile", publisher: "profile" };
-  const TOP_LEVEL = new Set(["home", "store", "library", "downloads", "wishlist", "friends", "profile", "settings", "publisher"]);
+  const TAB_OF = { home: "home", store: "store", game: "store", search: "search", library: "library", profile: "profile", settings: "profile", downloads: "profile", wishlist: "profile", friends: "profile", publisher: "profile", review: "profile" };
+  const TOP_LEVEL = new Set(["home", "store", "library", "downloads", "wishlist", "friends", "profile", "settings", "publisher", "review"]);
 
   // Form and two-click-confirm state for the Friends page. A new object whenever the account changes.
   const freshFriendsUI = () => ({ code: "", error: "", sending: false, confirmRemove: null, confirmReset: false });
@@ -54,7 +58,10 @@
       store: { ...defaultFilters(), result: { key: "" } },
       libraryUI: { q: "", filter: "all", selected: null },
       searchUI: { q: "", status: "idle", items: [], total: 0, error: null },
-      publisher: { tab: "overview", newName: "", nameError: "", creating: false },
+      publisher: { gameId: null, form: null, newTitle: "", studioName: "", accepted: false, error: "", busy: false, upload: null },
+      review: { tab: "studios", reason: "", busy: false },
+      google: { pending: false, error: "" },
+      emailCode: { sent: false, value: "", error: "", busy: false },
       draft: { apiBase: "", installRoot: "" },
       panel: null, // "notifications" | "account" | null: the dropdown under the top bar
       modal: null,
@@ -301,9 +308,8 @@
         renderView();
       },
 
-      /** Free games are added for real. Paid games and sample games are explained, never faked. */
+      /** Free games are added for real. Paid games are explained, never faked. */
       async acquire(g) {
-        if (g.sample) return openModal(sampleGameDialog(g));
         if (!g.isFree) return openModal(paymentsDialog(g));
         try {
           await call(api.addToLibrary(g.id));
@@ -409,22 +415,83 @@
         if (state.user) renderView();
       },
 
-      studios: () => call(api.studios()),
-      studioGames: (id) => call(api.studioGames(id)),
-      async createStudio(name) {
-        state.publisher.creating = true;
+      providers: () => call(api.providers()),
+
+      // ---- Sign in with Google (the browser does the signing in; the answer arrives as an event)
+      async googleSignIn() {
+        state.google = { pending: true, error: "" };
+        renderView();
         try {
-          await call(api.createStudio(name));
-          state.publisher.newName = "";
-          state.publisher.nameError = "";
-          invalidate("studios");
-          toast("Studio registered. It stays pending until MAREC verifies it.", "info");
+          await call(api.googleSignIn());
         } catch (error) {
-          state.publisher.nameError = error.message;
-        } finally {
-          state.publisher.creating = false;
+          state.google = { pending: false, error: error.message };
           renderView();
         }
+      },
+      async googleCancel() {
+        try {
+          await api.googleCancel();
+        } finally {
+          state.google = { pending: false, error: "" };
+          renderView();
+        }
+      },
+
+      // ---- Confirming an email address with the 6-digit code sent by email
+      async sendEmailCode() {
+        const ui = state.emailCode;
+        ui.busy = true;
+        ui.error = "";
+        renderView();
+        try {
+          await call(api.sendEmailCode());
+          ui.sent = true;
+          toast("We emailed you a 6-digit code.", "info");
+        } catch (error) {
+          ui.error = error.message;
+        } finally {
+          ui.busy = false;
+          renderView();
+        }
+      },
+      async verifyEmail(code) {
+        const ui = state.emailCode;
+        ui.busy = true;
+        ui.error = "";
+        renderView();
+        try {
+          state.user = await call(api.verifyEmail(code));
+          state.emailCode = { sent: false, value: "", error: "", busy: false };
+          invalidate("developer");
+          toast("Your email address is confirmed.", "info");
+        } catch (error) {
+          ui.error = error.message;
+          ui.busy = false;
+        }
+        renderView();
+      },
+
+      // ---- Publisher portal and staff review. Views handle their own busy and error states.
+      dev: {
+        account: () => call(api.developerAccount()),
+        register: (studioName, termsVersion) => call(api.registerDeveloper(studioName, termsVersion)),
+        games: (studioId) => call(api.studioGames(studioId)),
+        createGame: (studioId, title) => call(api.createGame(studioId, title)),
+        game: (gameId) => call(api.developerGame(gameId)),
+        updateGame: (gameId, changes) => call(api.updateGame(gameId, changes)),
+        submitGame: (gameId) => call(api.submitGame(gameId)),
+        builds: (gameId) => call(api.builds(gameId)),
+        pickBuildFolder: () => call(api.pickBuildFolder()),
+        uploadBuild: (options) => call(api.uploadBuild(options)),
+        cancelUpload: () => call(api.cancelUpload()),
+        downloadSdkConfig: (gameId) => call(api.downloadSdkConfig(gameId)),
+        onUploadProgress: (callback) => api.onUploadProgress(callback),
+      },
+      admin: {
+        studios: (status) => call(api.adminStudios(status)),
+        verifyStudio: (id) => call(api.verifyStudio(id)),
+        games: (status) => call(api.adminGames(status)),
+        transition: (id, action, reason) => call(api.transitionGame(id, action, reason)),
       },
     };
 
@@ -441,28 +508,6 @@
         ],
       };
     }
-    function sampleGameDialog(g) {
-      return {
-        title: "This is a sample game",
-        body: [h("p", {}, `${g.title} is a fictional game used to preview the store design. It has no files, so it cannot be bought, added or installed.`)],
-        actions: [
-          button({ label: "Close", onclick: closeModal }),
-          button({ label: "Switch to the live store", kind: "primary", onclick: () => { closeModal(); setSample(false); } }),
-        ],
-      };
-    }
-
-    // ------------------------------------------------------------------ sample mode
-    function setSample(on) {
-      local.setPref("sampleStore", Boolean(on));
-      cache.clear();
-      state.store = { ...defaultFilters(), result: { key: "" } };
-      if (shell) shell.refreshBanner();
-      toast(on ? "Previewing the store with sample games." : "Showing the live store.", "info");
-      if (state.route.name === "game") state.route = { name: "home", params: {} };
-      render();
-    }
-
     // ------------------------------------------------------------------ modal
     function openModal(spec) {
       state.modal = spec;
@@ -527,7 +572,9 @@
     const ctx = {
       h, icon, button, fmt, c: components, state, local, data, dl: downloads, actions, now, platform, buildInfo,
       navigate, openGame, browse, resource, invalidate, toast, libraryItem, libraryTile, progressBar,
-      openLibraryPanel, setSample, clearTimers, setTimer, reduceMotion,
+      openLibraryPanel, clearTimers, setTimer, reduceMotion,
+      emailCard: () => account.emailCard(ctx),
+      canReview: () => canReview(state.user),
       rerender: () => renderView(),
       rerenderShell: () => { if (shell) shell.applyCollapsed(); renderView(); },
       clearSearch: () => { if (searchBox) searchBox.value = ""; },
@@ -549,6 +596,11 @@
             return btn;
           })),
         h("div", { class: "nav bottom" },
+          canReview(state.user) ? (() => {
+            const btn = h("button", { type: "button", class: "nav-item", title: "Review", onclick: () => navigate("review") }, icon("check", 20), h("span", { class: "nav-label" }, "Review"));
+            navButtons.set("review", btn);
+            return btn;
+          })() : null,
           (() => {
             const btn = h("button", { type: "button", class: "nav-item publisher-link", title: "Publisher portal", onclick: () => navigate("publisher") }, icon("upload", 20), h("span", { class: "nav-label" }, "Publisher portal"));
             navButtons.set("publisher", btn);
@@ -565,7 +617,6 @@
       const collapse = h("button", { type: "button", class: "icon-btn desktop-only", title: "Collapse sidebar", "aria-label": "Collapse sidebar", onclick: () => { state.sidebarCollapsed = !state.sidebarCollapsed; local.setPref("sidebarCollapsed", state.sidebarCollapsed); applyCollapsed(); } }, icon("sidebar", 18));
       const backBtn = h("button", { type: "button", class: "icon-btn desktop-only", title: "Back", "aria-label": "Back", onclick: () => history(-1) }, icon("chevron-left", 18));
       const fwdBtn = h("button", { type: "button", class: "icon-btn desktop-only", title: "Forward", "aria-label": "Forward", onclick: () => history(1) }, icon("chevron-right", 18));
-      const banner = h("div", { class: "banner", role: "status" });
       const topbar = h("header", { class: "topbar" },
         collapse, backBtn, fwdBtn,
         h("div", { class: "top-brand" }, h("span", { class: "brand-mark" }, "M"), h("span", { class: "brand-text" }, "MAREC", h("b", {}, "STORE"))),
@@ -578,24 +629,14 @@
         tabButtons.set(id, btn);
         return btn;
       }));
-      const main = h("div", { class: "main" }, topbar, banner, content, bottomNav);
+      const main = h("div", { class: "main" }, topbar, content, bottomNav);
       const el = h("div", { class: "shell" }, sidebar, main);
 
       function applyCollapsed() {
         el.className = `shell ${state.sidebarCollapsed ? "collapsed" : ""}`.trim();
         collapse.setAttribute("aria-pressed", String(state.sidebarCollapsed));
       }
-      function refreshBanner() {
-        if (local.prefs().sampleStore) {
-          banner.className = "banner on";
-          banner.replaceChildren(icon("info", 16), h("span", {}, "You are previewing the store with sample games. They are fictional and cannot be bought or installed."),
-            button({ label: "Switch to the live store", kind: "link", onclick: () => setSample(false) }));
-        } else {
-          banner.className = "banner";
-          banner.replaceChildren();
-        }
-      }
-      return { el, content, navButtons, tabButtons, tabBadge, badge, bell, avatarBtn, backBtn, fwdBtn, applyCollapsed, refreshBanner };
+      return { el, content, navButtons, tabButtons, tabBadge, badge, bell, avatarBtn, backBtn, fwdBtn, applyCollapsed };
     }
 
     function updateNav() {
@@ -679,7 +720,6 @@
       if (!shell) {
         shell = buildShell();
         shell.applyCollapsed();
-        shell.refreshBanner();
         root.replaceChildren(shell.el, ...Array.from(root.children).filter(isToast));
       }
       const viewFn = VIEWS[state.route.name] || VIEWS.home;
@@ -726,6 +766,19 @@
       }
       api.onInstallProgress((p) => {
         if (downloads.handleProgress(p)) updateBars(p.gameId);
+      });
+      // The way back from Google: the launcher tells us when the browser sign-in finished.
+      api.onAuthEvent(async (event) => {
+        if (event.type === "signed-in") {
+          state.google = { pending: false, error: "" };
+          state.user = event.user;
+          toast("You are signed in with Google.", "info");
+          await afterSignIn();
+        } else {
+          state.google = { pending: false, error: event.message || "Sign-in did not finish." };
+          if (state.user) toast(state.google.error);
+          else renderView();
+        }
       });
       if (doc.addEventListener) {
         doc.addEventListener("keydown", (event) => {

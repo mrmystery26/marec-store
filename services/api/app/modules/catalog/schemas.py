@@ -57,6 +57,8 @@ class GameCard(BaseModel):
     price_minor: int | None
     currency: str
     is_free: bool
+    # "demo" (a free sample) or "full". While the store is demo-only, everything is a demo.
+    release_kind: str
     age_rating: str | None
     studio: StudioBrief
     categories: list[CategoryOut]
@@ -92,6 +94,7 @@ class GameFull(BaseModel):
     price_minor: int | None
     currency: str
     is_free: bool
+    release_kind: str
     age_rating: str | None
     protection_level: int
     offline_days: int

@@ -49,6 +49,14 @@
     },
     "portable": {
       "artifactName": "MarecStore.${ext}"
-    }
+    },
+    "protocols": [
+      {
+        "name": "MAREC Store",
+        "schemes": [
+          "marecstore"
+        ]
+      }
+    ]
   }
 }

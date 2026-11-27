@@ -15,7 +15,7 @@
    * native: the object Android injects as window.MarecAndroid.
    * hub:    where the app receives answers from native code (hub.on(type, id, payload)).
    */
-  function createAndroidBridge({ native, hub, MarecApi }) {
+  function createAndroidBridge({ native, hub, MarecApi, GoogleSignIn, crypto }) {
     const info = () => JSON.parse(native.info());
 
     // ---- native HTTP, used instead of fetch
@@ -26,6 +26,10 @@
     const downloads = new Map(); // game id -> native download id
 
     hub.on = (type, id, payload) => {
+      if (type === "deeplink") {
+        finishGoogleSignIn(payload && payload.url);
+        return;
+      }
       const entry = waiting.get(id);
       if (!entry) return;
       if (type === "http") {
@@ -74,12 +78,37 @@
       return cached.client;
     }
 
+    // ---- Sign in with Google: the system browser does it, and Android hands the way back (a
+    // marecstore://auth link) to hub.on("deeplink", ...) above.
+    const authListeners = new Set();
+    const signIn = GoogleSignIn
+      ? GoogleSignIn.createGoogleSignIn({
+          api: { googleStart: (challenge) => api().googleStart(challenge), googleExchange: (ticket, verifier) => api().googleExchange(ticket, verifier) },
+          crypto: crypto || GoogleSignIn.webCrypto(),
+        })
+      : null;
+    const tell = (event) => {
+      for (const listener of authListeners) listener(event);
+    };
+    async function finishGoogleSignIn(url) {
+      if (!signIn) return;
+      try {
+        const user = await signIn.complete(url);
+        if (user) tell({ type: "signed-in", user });
+      } catch (error) {
+        tell({ type: "failed", code: error.code || "ERROR", message: error.message });
+      }
+    }
+
     const wrap = (fn) => async (...args) => {
       try {
         return { ok: true, data: await fn(...args) };
       } catch (error) {
         return { ok: false, error: { code: error.code || "ERROR", message: error.message || "Something went wrong." } };
       }
+    };
+    const onlyOnPc = () => {
+      throw failure("UNSUPPORTED_PLATFORM", "Uploading a game needs the Windows launcher on a PC.");
     };
     const onlyOnWindows = () => {
       throw failure("UNSUPPORTED_PLATFORM", "Windows games can only be installed and played with the Windows launcher on a PC.");
@@ -150,9 +179,38 @@
       verify: wrap(onlyOnWindows),
       uninstall: wrap(onlyOnWindows),
 
-      studios: wrap(() => api().studios()),
-      createStudio: wrap((name) => api().createStudio(name)),
+      providers: wrap(() => api().providers()),
+      googleSignIn: wrap(async () => {
+        if (!signIn) throw failure("UNSUPPORTED_PLATFORM", "Sign in with Google is not available here.");
+        const { authUrl } = await signIn.begin();
+        native.openExternal(authUrl);
+        return { started: true };
+      }),
+      googleCancel: wrap(async () => {
+        if (signIn) signIn.cancel();
+        return { cancelled: true };
+      }),
+      sendEmailCode: wrap(() => api().sendEmailCode()),
+      verifyEmail: wrap((code) => api().verifyEmail(code)),
+
+      developerAccount: wrap(() => api().developerAccount()),
+      registerDeveloper: wrap((studioName, termsVersion) => api().registerDeveloper(studioName, termsVersion)),
       studioGames: wrap((studioId) => api().studioGames(studioId)),
+      createGame: wrap((studioId, title) => api().createGame(studioId, title)),
+      developerGame: wrap((gameId) => api().developerGame(gameId)),
+      updateGame: wrap((gameId, changes) => api().updateGame(gameId, changes)),
+      submitGame: wrap((gameId) => api().submitGame(gameId)),
+      builds: wrap((gameId) => api().builds(gameId)),
+      // Builds are folders of a Windows game on a PC, so a phone cannot upload them.
+      pickBuildFolder: wrap(onlyOnPc),
+      uploadBuild: wrap(onlyOnPc),
+      cancelUpload: wrap(async () => ({ cancelled: true })),
+      downloadSdkConfig: wrap(onlyOnPc),
+
+      adminStudios: wrap((status) => api().adminStudios(status)),
+      verifyStudio: wrap((studioId) => api().verifyStudio(studioId)),
+      adminGames: wrap((status) => api().adminGames(status)),
+      transitionGame: wrap((gameId, action, reason) => api().transitionGame(gameId, action, reason)),
 
       friends: wrap(() => api().friends()),
       friendRequests: wrap(() => api().friendRequests()),
@@ -176,6 +234,11 @@
       }),
       pickFolder: wrap(async () => null),
 
+      onAuthEvent: (callback) => {
+        authListeners.add(callback);
+        return () => authListeners.delete(callback);
+      },
+      onUploadProgress: () => () => {},
       onInstallProgress: (callback) => {
         progressListeners.add(callback);
         return () => progressListeners.delete(callback);
@@ -187,6 +250,11 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else if (host.MarecAndroid && !host.marec) {
     host.__marecNative = host.__marecNative || {};
-    host.marec = createAndroidBridge({ native: host.MarecAndroid, hub: host.__marecNative, MarecApi: host.MarecUI.api.MarecApi });
+    host.marec = createAndroidBridge({
+      native: host.MarecAndroid,
+      hub: host.__marecNative,
+      MarecApi: host.MarecUI.api.MarecApi,
+      GoogleSignIn: host.MarecUI["google-signin"],
+    });
   }
 })(typeof window !== "undefined" ? window : globalThis);

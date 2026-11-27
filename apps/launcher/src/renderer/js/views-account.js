@@ -60,6 +60,21 @@
     paint();
 
     const switchTab = (next) => { ctx.state.authTab = next; ctx.rerender(); };
+
+    // "Continue with Google" appears only when this store has Google set up (the server says so).
+    const providers = ctx.state.apiBase ? ctx.resource("providers", () => ctx.actions.providers()) : null;
+    const google = ctx.state.google;
+    let googleBlock = null;
+    if (providers && providers.status === "ready" && providers.data.google) {
+      googleBlock = h("div", { class: "auth-google" },
+        google.pending
+          ? h("div", { class: "auth-waiting", role: "status" },
+              h("p", {}, "Finish signing in with Google in your browser, then come back here."),
+              button({ label: "Cancel", kind: "ghost", onclick: () => ctx.actions.googleCancel() }))
+          : button({ label: "Continue with Google", kind: "primary wide", onclick: () => ctx.actions.googleSignIn() }),
+        google.error ? c.notice("warn", google.error) : null,
+        h("div", { class: "auth-or" }, h("span", {}, "or use your email")));
+    }
     return h("div", { class: "auth" },
       h("section", { class: "auth-brand" },
         h("div", { class: "wordmark" }, "MAREC", h("span", {}, "STORE")),
@@ -70,9 +85,33 @@
           h("button", { type: "button", role: "tab", class: tab === "login" ? "on" : "", "aria-selected": String(tab === "login"), onclick: () => switchTab("login") }, "Log in"),
           h("button", { type: "button", role: "tab", class: tab === "register" ? "on" : "", "aria-selected": String(tab === "register"), onclick: () => switchTab("register") }, "Create account")),
         ctx.state.apiBase ? null : c.notice("warn", "Set the store server address first. Tap Server settings below."),
+        googleBlock,
         form,
+        tab === "login" ? h("p", { class: "note" }, "Signed up with Google? Use the Google button above. Those accounts have no password.") : null,
         h("p", { class: "note" }, ctx.state.apiBase ? `Server: ${ctx.state.apiBase}` : "Server: not set"),
         button({ label: "Server settings", kind: "link", onclick: () => ctx.navigate("settings") })));
+  }
+
+  // ------------------------------------------------------------------ confirming an email address
+  /** Shown while the address is not confirmed: ask for a code by email, then type it in. */
+  function emailCard(ctx) {
+    const { h, c, button } = ctx;
+    const ui = ctx.state.emailCode;
+    const input = h("input", {
+      value: ui.value, inputmode: "numeric", maxlength: "6", autocomplete: "one-time-code", placeholder: "6-digit code", "aria-label": "6-digit code",
+      oninput: (e) => { ui.value = e.target.value.replace(/\D/g, "").slice(0, 6); },
+    });
+    const confirm = () => ctx.actions.verifyEmail(String(input.value || ui.value).trim());
+    return h("section", { class: "block narrow email-card" },
+      c.sectionHead("Confirm your email", "Some things, such as creating a developer account, need a confirmed email address."),
+      ui.error ? c.notice("warn", ui.error) : null,
+      ui.sent
+        ? h("div", {},
+            c.field({ label: "Code from the email", hint: "It works for 15 minutes.", input }),
+            h("div", { class: "row" },
+              button({ label: "Confirm", kind: "primary", disabled: ui.busy, onclick: confirm }),
+              button({ label: "Send a new code", kind: "ghost", disabled: ui.busy, onclick: () => ctx.actions.sendEmailCode() })))
+        : button({ label: ui.busy ? "Sending…" : "Email me a code", kind: "primary", disabled: ui.busy, onclick: () => ctx.actions.sendEmailCode() }));
   }
 
   // ------------------------------------------------------------------ profile
@@ -91,11 +130,12 @@
     let body;
     if (tab === "overview") {
       body = h("div", {},
-        h("div", { class: "profile-menu" }, [["wishlist", "Wishlist", "heart"], ["downloads", "Downloads", "download"], ["friends", "Friends", "users"], ["settings", "Settings", "sliders"]].map(([route, label, iconName]) =>
+        h("div", { class: "profile-menu" }, [["wishlist", "Wishlist", "heart"], ["downloads", "Downloads", "download"], ["friends", "Friends", "users"], ["settings", "Settings", "sliders"], ["publisher", "Publisher portal", "upload"], ...(ctx.canReview() ? [["review", "Review", "check"]] : [])].map(([route, label, iconName]) =>
           h("button", { type: "button", class: "menu-item", onclick: () => ctx.navigate(route) }, ctx.icon(iconName, 18), h("span", {}, label), ctx.icon("chevron-right", 16)))),
         h("div", { class: "stats" }, stat("Games owned", library.length), stat("Installed", installed.length), stat("On wishlist", ctx.local.wishlist().length)),
         h("section", { class: "block" }, c.sectionHead("Recently played", "From this PC."),
           recent.length ? h("div", { class: "card-grid compact" }, recent.map((i) => ctx.libraryTile(i))) : h("p", { class: "muted" }, "Games you play from this launcher show up here.")),
+        user.email_verified ? null : emailCard(ctx),
         h("section", { class: "block" }, c.sectionHead("Account"),
           h("dl", { class: "facts" },
             h("div", {}, h("dt", {}, "Email"), h("dd", {}, user.email)),
@@ -136,13 +176,11 @@
   }
 
   const SECTIONS = [["general", "General"], ["downloads", "Downloads"], ["interface", "Interface"], ["notifications", "Notifications"], ["account", "Account"]];
-  const REGIONS = [["MW", "Malawi"], ["ZM", "Zambia"], ["MZ", "Mozambique"], ["TZ", "Tanzania"], ["ZW", "Zimbabwe"], ["ZA", "South Africa"], ["KE", "Kenya"], ["", "Somewhere else"]];
 
   function settings(ctx) {
     const { h, c, button } = ctx;
     const st = ctx.state;
     const prefs = ctx.local.prefs();
-    const caps = ctx.data.capabilities();
     const loggedIn = Boolean(st.user);
     const section = loggedIn ? st.settingsSection : "general";
     const draft = st.draft;
@@ -158,10 +196,6 @@
           c.field({ label: "Store server", hint: "The address of the MAREC Store service.", input: serverInput }),
           h("p", { class: "note" }, "Changing the server logs you out. Games already installed stay in their old folder."),
           button({ label: "Save server", kind: "primary", onclick: () => ctx.actions.saveSettings({ apiBase: serverInput.value.trim(), installRoot: st.installRoot }) })),
-        ctx.platform.mobile ? null : group("Startup",
-          c.toggle({ label: "Start MAREC Store when Windows starts", description: "Not available yet.", checked: false, disabled: true })),
-        group("Preview",
-          c.toggle({ label: "Preview the store with sample games", description: "Fills the store with fictional games so you can see the design. They cannot be bought or installed.", checked: prefs.sampleStore, onchange: (v) => ctx.setSample(v) })),
         group("About", h("p", { class: "muted" }, aboutText(ctx)))],
       downloads: ctx.platform.mobile ? [
         group("Games on this phone",
@@ -173,14 +207,8 @@
             button({ label: "Save folder", kind: "primary", onclick: () => ctx.actions.saveSettings({ apiBase: st.apiBase, installRoot: folderInput.value.trim() }) }))),
         group("Download behaviour",
           c.select({ label: "Games downloading at once", description: "Lower is kinder to slow connections. Extra games wait in the queue.", value: String(prefs.simultaneousDownloads),
-            options: [{ value: "1", label: "1 game" }, { value: "2", label: "2 games" }, { value: "3", label: "3 games" }], onchange: (v) => { ctx.local.setPref("simultaneousDownloads", Number(v)); ctx.dl.setLimit(Number(v)); ctx.rerender(); } }),
-          c.select({ label: "Download speed limit", description: "The launcher cannot limit speed yet.", value: "none", disabled: true, options: [{ value: "none", label: "No limit" }] }))],
+            options: [{ value: "1", label: "1 game" }, { value: "2", label: "2 games" }, { value: "3", label: "3 games" }], onchange: (v) => { ctx.local.setPref("simultaneousDownloads", Number(v)); ctx.dl.setLimit(Number(v)); ctx.rerender(); } }))],
       interface: [
-        group("Prices and region",
-          c.select({ label: "Show prices in", description: caps.usd ? "Dollar prices are shown where the store provides them." : "The store sends kwacha prices only for now.", value: prefs.currency,
-            options: [{ value: "MWK", label: "Malawi kwacha (MWK)" }, { value: "USD", label: "US dollars (USD)", disabled: !caps.usd }], onchange: pref("currency") }),
-          c.select({ label: "My region", description: "Used when games are limited to certain countries. The store does not send regions yet, so this only affects sample games.", value: prefs.region || "",
-            options: REGIONS.map(([value, label]) => ({ value, label })), onchange: pref("region") })),
         group("Layout and motion",
           ctx.platform.mobile ? null : c.toggle({ label: "Collapse the sidebar", description: "Keep only icons in the left navigation.", checked: prefs.sidebarCollapsed, onchange: (v) => { ctx.local.setPref("sidebarCollapsed", v); ctx.state.sidebarCollapsed = v; ctx.rerenderShell(); } }),
           c.toggle({ label: "Reduce motion", description: "Stops the featured carousel from moving on its own.", checked: prefs.reduceMotion, onchange: (v) => { ctx.local.setPref("reduceMotion", v); ctx.rerender(); } }))],
@@ -207,7 +235,7 @@
         h("div", { class: "settings-pane" }, panes[section], loggedIn ? null : button({ label: "← Back to log in", kind: "link", onclick: () => ctx.navigate("home") }))));
   }
 
-  const api = { login, profile, settings, validateRegistration };
+  const api = { login, profile, settings, validateRegistration, emailCard };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else (host.MarecUI = host.MarecUI || {})["views-account"] = api;
 })(typeof window !== "undefined" ? window : globalThis);
