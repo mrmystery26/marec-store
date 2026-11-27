@@ -25,6 +25,18 @@ public class HostsTest {
     }
 
     @Test
+    public void onlyTheStoresSignInAddressCountsAsASignInLink() {
+        assertTrue(Hosts.isSignInLink("marecstore://auth?ticket=abc"));
+        assertTrue(Hosts.isSignInLink("MARECSTORE://auth?error=GOOGLE_CANCELLED"));
+        assertTrue(Hosts.isSignInLink("marecstore://auth"));
+        assertFalse(Hosts.isSignInLink("marecstore://authx?ticket=abc"));
+        assertFalse(Hosts.isSignInLink("marecstore://other?ticket=abc"));
+        assertFalse(Hosts.isSignInLink("https://example.com/?ticket=abc"));
+        assertFalse(Hosts.isSignInLink("javascript:alert(1)"));
+        assertFalse(Hosts.isSignInLink(null));
+    }
+
+    @Test
     public void checksumsMustBeLowerCaseHex64() {
         assertTrue(Hosts.isSha256("a".repeat(64)));
         assertFalse(Hosts.isSha256("A".repeat(64)));

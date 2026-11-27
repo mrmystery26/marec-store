@@ -17,10 +17,12 @@ from app.core.db import Base, UTCDateTime, utcnow
 from app.modules.catalog.states import GameStatus
 
 AGE_RATINGS = ("3+", "7+", "12+", "16+", "18+")
+RELEASE_KINDS = ("demo", "full")
 REQUIREMENT_TIERS = ("minimum", "recommended")
 
 _STATUS_LIST = ", ".join(f"'{s.value}'" for s in GameStatus)
 _AGE_LIST = ", ".join(f"'{a}'" for a in AGE_RATINGS)
+_KIND_LIST = ", ".join(f"'{k}'" for k in RELEASE_KINDS)
 _TIER_LIST = ", ".join(f"'{t}'" for t in REQUIREMENT_TIERS)
 
 
@@ -43,6 +45,7 @@ class Game(Base):
         CheckConstraint(
             f"age_rating IS NULL OR age_rating IN ({_AGE_LIST})", name="age_rating_valid"
         ),
+        CheckConstraint(f"release_kind IN ({_KIND_LIST})", name="release_kind_valid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -57,6 +60,8 @@ class Game(Base):
         String(20), default="draft", server_default="draft", index=True
     )
     status_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # "demo" is a free sample of a game. Full releases open later (see DEMO_ONLY).
+    release_kind: Mapped[str] = mapped_column(String(8), default="demo", server_default="demo")
     # Money is stored in tambala (1 kwacha = 100 tambala). NULL means "not set yet".
     price_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="MWK", server_default="MWK")

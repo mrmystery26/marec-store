@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from app.core.config import get_settings
 
 ISSUER = "marec-store-api"
 ACCESS_TOKEN_TYPE = "access"
+STATE_TOKEN_TYPE = "oauth_state"
 
 # argon2id with the library's current recommended parameters.
 _hasher = PasswordHasher()
@@ -74,3 +76,40 @@ def decode_access_token(token: str) -> dict:
     if payload.get("typ") != ACCESS_TOKEN_TYPE:
         raise jwt.InvalidTokenError("Wrong token type.")
     return payload
+
+
+def create_state_token(nonce: str, code_challenge: str, lifetime: timedelta | None = None) -> str:
+    """The `state` sent to Google and returned to the callback. Signed, so it cannot be forged,
+    and short-lived. It carries the app's PKCE challenge through the browser round trip."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "iss": ISSUER,
+        "typ": STATE_TOKEN_TYPE,
+        "n": nonce,
+        "cc": code_challenge,
+        "iat": now,
+        "exp": now + (lifetime or timedelta(minutes=10)),
+    }
+    return jwt.encode(payload, get_settings().jwt_secret.get_secret_value(), algorithm="HS256")
+
+
+def decode_state_token(token: str) -> dict:
+    """Raises jwt.PyJWTError if the state is invalid, expired or not a state token."""
+    payload = jwt.decode(
+        token,
+        get_settings().jwt_secret.get_secret_value(),
+        algorithms=["HS256"],
+        issuer=ISSUER,
+        options={"require": ["exp", "iat", "n", "cc"]},
+    )
+    if payload.get("typ") != STATE_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("Wrong token type.")
+    return payload
+
+
+def hash_email_code(user_id: uuid.UUID, code: str) -> str:
+    """Keyed hash of a 6-digit code. Short codes can be guessed offline, so the key (the server
+    secret) matters, and the attempt counter limits online guessing."""
+    key = get_settings().jwt_secret.get_secret_value().encode("utf-8")
+    message = f"email-code:{user_id}:{code}".encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()

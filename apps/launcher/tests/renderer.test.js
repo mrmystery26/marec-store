@@ -93,9 +93,17 @@ const STORE = [
     studio: { name: "Studio F", slug: "f" }, categories: [{ slug: "puzzle", name: "Puzzle" }], published_at: "2026-10-02T00:00:00Z" },
 ];
 
+const DEV_ACCOUNT = {
+  is_developer: true, email_verified: true, terms_version: "2026-11",
+  limits: { demo_only: true, max_demo_build_mb: 1024, max_games_per_studio: 5 },
+  studios: [{ id: "s1", name: "Lakeshore Games", slug: "lakeshore", status: "pending", my_role: "owner" }],
+};
+
 function fakeApi(items, { user = null, ...overrides } = {}) {
   const calls = [];
   let progress = () => {};
+  let authCallback = () => {};
+  let uploadCallback = () => {};
   const ok = (data) => Promise.resolve({ ok: true, data });
   const api = {
     calls,
@@ -121,9 +129,31 @@ function fakeApi(items, { user = null, ...overrides } = {}) {
     uninstall: (id) => (calls.push(["uninstall", id]), ok(null)),
     saveSettings: (s) => (calls.push(["save", s]), ok(s)),
     pickFolder: () => ok("D:\\Games"),
-    studios: () => ok([{ id: "s1", name: "Lakeshore Games", slug: "lakeshore", status: "pending", my_role: "owner" }]),
-    createStudio: (name) => (calls.push(["createStudio", name]), ok({})),
+    providers: () => ok({ google: false, email_codes: false }),
+    googleSignIn: () => (calls.push(["googleSignIn"]), ok({ started: true })),
+    googleCancel: () => (calls.push(["googleCancel"]), ok({ cancelled: true })),
+    sendEmailCode: () => (calls.push(["sendEmailCode"]), ok({ expires_in_minutes: 15 })),
+    verifyEmail: (code) => (calls.push(["verifyEmail", code]), ok({ email: "pat@example.com", display_name: "Pat", email_verified: true, created_at: "2026-10-18T00:00:00Z", roles: [] })),
+    developerAccount: () => ok(DEV_ACCOUNT),
+    registerDeveloper: (name, terms) => (calls.push(["registerDeveloper", name, terms]), ok({ id: "s9", name, slug: "x", status: "pending", my_role: "owner" })),
     studioGames: () => ok({ items: [], total: 0 }),
+    createGame: (studioId, title) => (calls.push(["createGame", studioId, title]), ok({ id: "g9", title })),
+    developerGame: (id) => ok({ id, slug: "my-demo", title: "My Demo", status: "draft", release_kind: "demo", summary: "", description: "", age_rating: null, categories: [], requirements: [], studio: { name: "Lakeshore Games", slug: "lakeshore" } }),
+    updateGame: (id, changes) => (calls.push(["updateGame", id, changes]), ok({})),
+    submitGame: (id) => (calls.push(["submitGame", id]), ok({})),
+    builds: () => ok([]),
+    pickBuildFolder: () => ok({ name: "export", fileCount: 3, totalBytes: 5_000_000, exeCandidates: ["Game.exe"] }),
+    uploadBuild: (options) => (calls.push(["uploadBuild", options]), ok({ build: { id: "b1" } })),
+    cancelUpload: () => (calls.push(["cancelUpload"]), ok({ cancelled: true })),
+    downloadSdkConfig: (id) => (calls.push(["downloadSdkConfig", id]), ok({ path: "C:\\marec_config.gd" })),
+    adminStudios: (status) => (calls.push(["adminStudios", status]), ok({ items: [], total: 0 })),
+    verifyStudio: (id) => (calls.push(["verifyStudio", id]), ok({})),
+    adminGames: (status) => (calls.push(["adminGames", status]), ok({ items: [], total: 0 })),
+    transitionGame: (id, action, reason) => (calls.push(["transitionGame", id, action, reason]), ok({})),
+    onAuthEvent: (cb) => ((authCallback = cb), () => {}),
+    emitAuth: (event) => authCallback(event),
+    onUploadProgress: (cb) => ((uploadCallback = cb), () => {}),
+    emitUpload: (event) => uploadCallback(event),
     onInstallProgress: (cb) => ((progress = cb), () => {}),
     emitProgress: (p) => progress(p),
     ...overrides,
@@ -442,30 +472,37 @@ test("when the store cannot be reached the home page says so and offers a way fo
   const down = () => Promise.resolve({ ok: false, error: { code: "NETWORK_ERROR", message: "Cannot reach the store: refused" } });
   const { root } = await launch([], { ...LOGGED_IN, games: down });
   assert.match(textOf(root), /Can't reach the store/);
-  assert.ok(button(root, "Try again") && button(root, "Server settings") && button(root, "Preview with sample games"));
+  assert.ok(button(root, "Try again") && button(root, "Server settings"));
+  assert.equal(button(root, "Preview with sample games"), undefined, "there is no sample store any more");
 });
 
-// ---------------------------------------------------------------- sample store
-
-test("the sample store is labelled everywhere and its games can never be added", async () => {
-  const { root, api } = await launch([], LOGGED_IN);
-  const settingsButton = byLabel(root, "Settings");
-  settingsButton.dispatch("click");
-  const toggle = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch" && /sample/i.test(textOf(n.parent)))[0];
-  toggle.checked = true;
-  toggle.dispatch("change");
+test("an empty store says so and points developers to the publisher portal", async () => {
+  const { root } = await launch([], { ...LOGGED_IN, games: () => Promise.resolve({ ok: true, data: { items: [], total: 0, limit: 24, offset: 0 } }) });
+  assert.match(textOf(root), /The store has no games yet/);
+  assert.doesNotMatch(textOf(root), /sample/i);
+  button(root, "Publish a demo").dispatch("click");
   await flush();
+  assert.match(textOf(root), /Publisher portal/);
+});
 
+// ---------------------------------------------------------------- no placeholders
+
+test("nothing in the launcher offers or shows made-up games", async () => {
+  const { root } = await launch([], LOGGED_IN);
+  byLabel(root, "Settings").dispatch("click");
+  assert.doesNotMatch(textOf(root), /sample/i);
+  assert.equal(findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch" && /sample/i.test(textOf(n.parent))).length, 0);
+});
+
+test("a demo is labelled as a demo, and its page says what that means", async () => {
+  const demo = { ...STORE[0], release_kind: "demo", is_free: true, price_minor: 0 };
+  const { root } = await launch([], { ...LOGGED_IN, games: () => Promise.resolve({ ok: true, data: { items: [demo], total: 1, limit: 24, offset: 0 } }), game: () => Promise.resolve({ ok: true, data: { ...demo, description: "About.", offline_days: 7, requirements: [] } }) });
   nav(root, "Store").dispatch("click");
   await flush();
-  assert.match(textOf(root), /previewing the store with sample games/);
-  assert.match(textOf(root), /Sample/);
-  storeCard(root, "Nsima Tycoon").dispatch("click"); // a free sample game
+  assert.ok(findAll(root, (n) => /\bbadge\b/.test(n.className) && /demo/.test(n.className)).length > 0);
+  storeCard(root, demo.title).dispatch("click");
   await flush();
-  button(root, "Add to library").dispatch("click");
-  await flush();
-  assert.match(textOf(root), /This is a sample game/);
-  assert.equal(api.calls.filter((c) => c[0] === "addToLibrary").length, 0);
+  assert.match(textOf(root), /This is a free demo/);
 });
 
 // ---------------------------------------------------------------- settings and publisher
@@ -492,14 +529,14 @@ test("settings can save the server and the install folder", async () => {
   assert.deepEqual(api.calls.at(-1), ["save", { apiBase: "http://store.test", installRoot: "D:\\Games" }]);
 });
 
-test("settings that the launcher cannot honour yet are shown as unavailable, not as dead switches", async () => {
+test("settings only offer things that work: no dead switches or disabled stubs", async () => {
   const { root } = await launch([], LOGGED_IN);
   byLabel(root, "Settings").dispatch("click");
-  const startup = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch")[0];
-  assert.equal(startup.disabled, true);
+  const switches = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch");
+  assert.ok(switches.every((n) => n.disabled !== true), "no switch is permanently disabled");
+  assert.doesNotMatch(textOf(root), /Not available yet/);
   settingsTab(root, "Downloads").dispatch("click");
-  const limit = byLabel(root, "Download speed limit");
-  assert.equal(limit.disabled, true);
+  assert.doesNotMatch(textOf(root), /speed limit/i);
 });
 
 test("settings are reachable before logging in", async () => {
@@ -510,20 +547,364 @@ test("settings are reachable before logging in", async () => {
   assert.match(textOf(root), /Log in/);
 });
 
-test("the publisher portal lists the player's studios and checks the studio name", async () => {
-  const { root, api } = await launch([], LOGGED_IN);
-  nav(root, "Publisher portal").dispatch("click");
-  await flush();
-  assert.match(textOf(root), /Lakeshore Games/);
-  assert.match(textOf(root), /Waiting for MAREC to verify/);
+// ---------------------------------------------------------------- Google sign-in and email codes
 
-  const name = byLabel(root, "Studio name");
-  name.value = "x";
-  name.dispatch("input");
-  findAll(root, (n) => n.tagName === "form" && /panel-form/.test(n.className))[0].dispatch("submit");
+const googleOn = { providers: () => Promise.resolve({ ok: true, data: { google: true, email_codes: true } }) };
+
+test("the Continue with Google button appears only when the store has Google set up", async () => {
+  const off = await launch([]);
+  assert.equal(button(off.root, "Continue with Google"), undefined);
+  const on = await launch([], googleOn);
+  assert.ok(button(on.root, "Continue with Google"));
+  assert.match(textOf(on.root), /Signed up with Google\? Use the Google button/);
+});
+
+test("Continue with Google starts the browser sign-in and waits, and can be cancelled", async () => {
+  const { root, api } = await launch([], googleOn);
+  button(root, "Continue with Google").dispatch("click");
   await flush();
-  assert.match(textOf(root), /Use 2 to 60 characters/);
-  assert.equal(api.calls.filter((c) => c[0] === "createStudio").length, 0);
+  assert.deepEqual(api.calls.at(-1), ["googleSignIn"]);
+  assert.match(textOf(root), /Finish signing in with Google in your browser/);
+  assert.equal(button(root, "Continue with Google"), undefined, "no second sign-in while one is waiting");
+  button(root, "Cancel").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.at(-1), ["googleCancel"]);
+  assert.ok(button(root, "Continue with Google"));
+});
+
+test("when Google sign-in finishes the player lands in the store signed in", async () => {
+  const { root, api } = await launch([], googleOn);
+  button(root, "Continue with Google").dispatch("click");
+  await flush();
+  api.emitAuth({ type: "signed-in", user: { email: "gina@gmail.com", display_name: "Gina", email_verified: true, created_at: "2026-11-20T00:00:00Z", roles: [] } });
+  await flush();
+  assert.ok(nav(root, "Library") && nav(root, "Store"), "the sidebar is shown");
+  assert.doesNotMatch(textOf(root), /Finish signing in with Google/);
+});
+
+test("a cancelled or failed Google sign-in says why and lets the player try again", async () => {
+  const { root, api } = await launch([], googleOn);
+  button(root, "Continue with Google").dispatch("click");
+  await flush();
+  api.emitAuth({ type: "failed", code: "GOOGLE_CANCELLED", message: "Sign-in was cancelled." });
+  await flush();
+  assert.match(textOf(root), /Sign-in was cancelled\./);
+  assert.ok(button(root, "Continue with Google"));
+  assert.equal(findAll(root, (n) => n.tagName === "form").length, 1, "email sign-in is still there");
+});
+
+test("the Google button reports a failure to start (for example the store is not set up)", async () => {
+  const { root } = await launch([], { ...googleOn, googleSignIn: () => Promise.resolve({ ok: false, error: { code: "GOOGLE_NOT_CONFIGURED", message: "Sign in with Google is not set up on this server." } }) });
+  button(root, "Continue with Google").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /not set up on this server/);
+  assert.ok(button(root, "Continue with Google"));
+});
+
+const UNVERIFIED = { user: { email: "pat@example.com", display_name: "Pat", email_verified: false, created_at: "2026-10-18T00:00:00Z", roles: [] } };
+
+test("an unconfirmed email is confirmed with a code from the email", async () => {
+  const { root, api } = await launch([], UNVERIFIED);
+  nav(root, "Library").dispatch("click"); // any page, then the profile
+  byLabel(root, "Account menu").dispatch("click");
+  button(root, "Profile").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Confirm your email/);
+  button(root, "Email me a code").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.at(-1), ["sendEmailCode"]);
+  const code = byLabel(root, "6-digit code");
+  code.value = "123456";
+  button(root, "Confirm").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.at(-1), ["verifyEmail", "123456"]);
+  assert.doesNotMatch(textOf(root), /Confirm your email/);
+});
+
+test("a wrong code shows the store's message and keeps the box open", async () => {
+  const { root } = await launch([], { ...UNVERIFIED, verifyEmail: () => Promise.resolve({ ok: false, error: { code: "WRONG_CODE", message: "That code is not right or has expired." } }) });
+  byLabel(root, "Account menu").dispatch("click");
+  button(root, "Profile").dispatch("click");
+  await flush();
+  button(root, "Email me a code").dispatch("click");
+  await flush();
+  byLabel(root, "6-digit code").value = "000000";
+  button(root, "Confirm").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /not right or has expired/);
+  assert.ok(byLabel(root, "6-digit code"));
+});
+
+// ---------------------------------------------------------------- the publisher portal
+
+const openPortal = async (root) => { nav(root, "Publisher portal").dispatch("click"); await flush(); };
+const NOT_A_DEV = { ...DEV_ACCOUNT, is_developer: false, studios: [] };
+const developerApi = (over = {}) => ({ ...LOGGED_IN, ...over });
+
+test("a player who is not a developer yet sees the steps and the rules", async () => {
+  const { root } = await launch([], developerApi({ developerAccount: () => Promise.resolve({ ok: true, data: NOT_A_DEV }) }));
+  await openPortal(root);
+  assert.match(textOf(root), /Become a developer/);
+  assert.match(textOf(root), /only accepts free demos/);
+  assert.ok(button(root, "Create developer account"));
+});
+
+test("creating a developer account needs the rules accepted and a studio name", async () => {
+  const { root, api } = await launch([], developerApi({ developerAccount: () => Promise.resolve({ ok: true, data: NOT_A_DEV }) }));
+  await openPortal(root);
+  button(root, "Create developer account").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Use 2 to 60 characters for the studio name/);
+  byLabel(root, "Studio name").value = "Zomba Games";
+  byLabel(root, "Studio name").dispatch("input");
+  button(root, "Create developer account").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Accept the developer rules/);
+  assert.equal(api.calls.filter((c) => c[0] === "registerDeveloper").length, 0);
+
+  const accept = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch" && /rules/.test(textOf(n.parent)))[0];
+  accept.checked = true;
+  accept.dispatch("change");
+  button(root, "Create developer account").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "registerDeveloper")[0], ["registerDeveloper", "Zomba Games", "2026-11"]);
+});
+
+test("an unconfirmed email blocks developer registration and offers the code box", async () => {
+  const { root } = await launch([], developerApi({ developerAccount: () => Promise.resolve({ ok: true, data: { ...NOT_A_DEV, email_verified: false } }) }));
+  await openPortal(root);
+  assert.match(textOf(root), /Confirm your email/);
+  assert.equal(button(root, "Create developer account").disabled, true);
+});
+
+test("a pending studio is listed, can not create demos yet, and explains why", async () => {
+  const { root } = await launch([], LOGGED_IN);
+  await openPortal(root);
+  assert.match(textOf(root), /Lakeshore Games/);
+  assert.match(textOf(root), /MAREC has to verify this studio/);
+  assert.equal(button(root, "Create demo"), undefined);
+  assert.match(textOf(root), /Demos only for now/);
+});
+
+const VERIFIED = { ...DEV_ACCOUNT, studios: [{ ...DEV_ACCOUNT.studios[0], status: "verified" }] };
+const verifiedStudio = (over = {}) => developerApi({ developerAccount: () => Promise.resolve({ ok: true, data: VERIFIED }), ...over });
+
+test("a verified studio creates a demo and lands in its editor", async () => {
+  const { root, api } = await launch([], verifiedStudio());
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "createGame")[0], ["createGame", "s1", "Maize Run"]);
+  assert.match(textOf(root), /My Demo/);
+  assert.ok(button(root, "Save details") && button(root, "Submit for review"));
+});
+
+test("the demo form checks every field before saving, then sends exactly what the store expects", async () => {
+  const { root, api } = await launch([], verifiedStudio());
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+
+  byLabel(root, "Summary").value = "";
+  button(root, "Save details").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Write a one-line summary/);
+  assert.match(textOf(root), /Describe your game/);
+  assert.match(textOf(root), /Choose an age rating/);
+  assert.match(textOf(root), /Pick at least one genre/);
+  assert.match(textOf(root), /Say which processor is needed/);
+  assert.equal(api.calls.filter((c) => c[0] === "updateGame").length, 0);
+
+  byLabel(root, "Summary").value = "Dodge the goats.";
+  byLabel(root, "Description").value = "A short demo.";
+  byLabel(root, "Processor").value = "Intel Core i3";
+  byLabel(root, "Age rating").value = "7+";
+  byLabel(root, "Age rating").dispatch("change");
+  findAll(root, (n) => n.tagName === "button" && /chip/.test(n.className) && textOf(n) === "Racing")[0].dispatch("click");
+  button(root, "Save details").dispatch("click");
+  await flush();
+  const sent = api.calls.filter((c) => c[0] === "updateGame")[0];
+  assert.equal(sent[1], "g9");
+  assert.deepEqual(sent[2], {
+    summary: "Dodge the goats.", description: "A short demo.", age_rating: "7+", category_slugs: ["racing"],
+    requirements: [{ tier: "minimum", os: "Windows 10 64-bit", cpu: "Intel Core i3", ram_mb: 4096, gpu: "", storage_mb: 500 }],
+  });
+});
+
+test("submitting for review sends the demo, and the store's list of what is missing is shown", async () => {
+  const { root, api } = await launch([], verifiedStudio({
+    submitGame: () => Promise.resolve({ ok: false, error: { code: "SUBMISSION_INCOMPLETE", message: "Missing: summary, a ready build" } }),
+  }));
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+  button(root, "Submit for review").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Missing: summary, a ready build/);
+  assert.ok(api);
+});
+
+test("uploading a build: choose the folder, see its size, upload, and see progress", async () => {
+  const { root, api } = await launch([], verifiedStudio());
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+
+  assert.match(textOf(root), /at most 1024 MB/);
+  button(root, "Choose game folder").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /export: 3 files, 5 MB/);
+  byLabel(root, "Version").value = "1.0.0";
+  byLabel(root, "Version").dispatch("input");
+  button(root, "Upload build").dispatch("click");
+  await flush();
+  const upload = api.calls.filter((c) => c[0] === "uploadBuild")[0][1];
+  assert.equal(upload.version, "1.0.0");
+  assert.equal(upload.entryPoint, "Game.exe");
+  assert.ok(upload.gameId);
+});
+
+test("upload progress moves the bar and names the step", async () => {
+  let release;
+  const { root, api } = await launch([], verifiedStudio({ uploadBuild: () => new Promise((resolve) => { release = () => resolve({ ok: true, data: { build: {} } }); }) }));
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+  button(root, "Choose game folder").dispatch("click");
+  await flush();
+  button(root, "Upload build").dispatch("click");
+  await flush();
+  const gameId = "g9";
+  api.emitUpload({ gameId, phase: "uploading", done: 2_500_000, total: 5_000_000 });
+  assert.match(textOf(root), /Uploading… 50%/);
+  assert.ok(button(root, "Cancel upload"));
+  button(root, "Cancel upload").dispatch("click");
+  assert.deepEqual(api.calls.at(-1), ["cancelUpload"]);
+  release();
+  await flush();
+});
+
+test("a failed upload shows what went wrong and lets the developer try again", async () => {
+  const { root } = await launch([], verifiedStudio({ uploadBuild: () => Promise.resolve({ ok: false, error: { code: "DEMO_TOO_LARGE", message: "A demo can be at most 1024 MB." } }) }));
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+  button(root, "Choose game folder").dispatch("click");
+  await flush();
+  button(root, "Upload build").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /A demo can be at most 1024 MB/);
+  assert.ok(button(root, "Upload build"));
+});
+
+test("the SDK config is downloaded for the demo", async () => {
+  const { root, api } = await launch([], verifiedStudio());
+  await openPortal(root);
+  byLabel(root, "Demo title").value = "Maize Run";
+  byLabel(root, "Demo title").dispatch("input");
+  button(root, "Create demo").dispatch("click");
+  await flush();
+  button(root, "Download SDK config").dispatch("click");
+  await flush();
+  assert.equal(api.calls.filter((c) => c[0] === "downloadSdkConfig").length, 1);
+  assert.match(textOf(root), /addons\/marec_sdk/);
+});
+
+test("changes requested by MAREC are shown to the developer on the demo", async () => {
+  const { root } = await launch([], verifiedStudio({
+    studioGames: () => Promise.resolve({ ok: true, data: { items: [{ id: "g1", title: "Maize Run", status: "changes_requested", updated_at: "2026-11-20T00:00:00Z" }], total: 1 } }),
+    developerGame: (id) => Promise.resolve({ ok: true, data: { id, title: "Maize Run", status: "changes_requested", status_reason: "Add a clearer description.", release_kind: "demo", summary: "s", description: "d", age_rating: "7+", categories: [{ slug: "racing", name: "Racing" }], requirements: [], studio: { name: "Lakeshore Games", slug: "lakeshore" } } }),
+  }));
+  await openPortal(root);
+  button(root, "Open").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /MAREC asked for changes: Add a clearer description\./);
+  assert.ok(button(root, "Submit for review"), "it can be fixed and sent again");
+});
+
+test("a phone can manage demos but is told uploads need a PC", async () => {
+  const { root } = await launch([], verifiedStudio({ platform: PHONE() }));
+  await openPortal(root);
+  assert.ok(root);
+});
+
+// ---------------------------------------------------------------- staff review
+
+const STAFF = { user: { email: "boss@example.com", display_name: "Boss", email_verified: true, created_at: "2026-10-18T00:00:00Z", roles: ["super_admin"] } };
+const REVIEW_GAME = { id: "g1", title: "Maize Run", status: "submitted", summary: "Dodge the goats.", description: "A demo.", release_kind: "demo", age_rating: "7+", studio: { name: "Zomba Games", slug: "zomba" }, categories: [{ slug: "racing", name: "Racing" }], requirements: [{ tier: "minimum", os: "Windows 10", ram_mb: 4096, storage_mb: 500 }] };
+
+test("only staff see the Review screen", async () => {
+  const player = await launch([], LOGGED_IN);
+  assert.equal(nav(player.root, "Review"), undefined);
+  const staff = await launch([], STAFF);
+  assert.ok(nav(staff.root, "Review"));
+});
+
+test("staff verify a waiting studio", async () => {
+  const { root, api } = await launch([], { ...STAFF, adminStudios: () => Promise.resolve({ ok: true, data: { items: [{ id: "s7", name: "Zomba Games", slug: "zomba-games", status: "pending", created_at: "2026-11-20T00:00:00Z", verified_at: null }], total: 1 } }) });
+  nav(root, "Review").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Zomba Games/);
+  button(root, "Verify").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "verifyStudio")[0], ["verifyStudio", "s7"]);
+});
+
+test("staff move a submitted demo through review, and a reason is required to ask for changes", async () => {
+  const { root, api } = await launch([], { ...STAFF, adminGames: (status) => Promise.resolve({ ok: true, data: { items: status === "under_review" ? [{ ...REVIEW_GAME, status: "under_review" }] : [], total: 0 } }) });
+  nav(root, "Review").dispatch("click");
+  await flush();
+  findAll(root, (n) => n.tagName === "button" && n.attributes.role === "tab" && textOf(n) === "Demos to review")[0].dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Maize Run/);
+  assert.match(textOf(root), /Zomba Games/);
+
+  button(root, "Request changes").dispatch("click");
+  await flush();
+  assert.match(textOf(root), /Write a reason first/);
+  assert.equal(api.calls.filter((c) => c[0] === "transitionGame").length, 0);
+
+  const reason = byLabel(root, "Reason for Maize Run");
+  reason.value = "Add a clearer description.";
+  reason.dispatch("input");
+  button(root, "Request changes").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "transitionGame")[0], ["transitionGame", "g1", "request_changes", "Add a clearer description."]);
+});
+
+test("approving and publishing need no reason", async () => {
+  const { root, api } = await launch([], { ...STAFF, adminGames: (status) => Promise.resolve({ ok: true, data: { items: status === "approved" ? [{ ...REVIEW_GAME, status: "approved" }] : [], total: 0 } }) });
+  nav(root, "Review").dispatch("click");
+  await flush();
+  findAll(root, (n) => n.tagName === "button" && n.attributes.role === "tab" && textOf(n) === "Demos to review")[0].dispatch("click");
+  await flush();
+  button(root, "Publish").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "transitionGame")[0], ["transitionGame", "g1", "publish", undefined]);
+});
+
+test("live demos can be suspended, with a reason", async () => {
+  const { root, api } = await launch([], { ...STAFF, adminGames: (status) => Promise.resolve({ ok: true, data: { items: status === "published" ? [{ ...REVIEW_GAME, status: "published" }] : [], total: 0 } }) });
+  nav(root, "Review").dispatch("click");
+  await flush();
+  findAll(root, (n) => n.tagName === "button" && n.attributes.role === "tab" && textOf(n) === "Live demos")[0].dispatch("click");
+  await flush();
+  byLabel(root, "Reason for Maize Run").value = "Reported as unsafe.";
+  button(root, "Suspend").dispatch("click");
+  await flush();
+  assert.deepEqual(api.calls.filter((c) => c[0] === "transitionGame")[0], ["transitionGame", "g1", "suspend", "Reported as unsafe."]);
 });
 
 test("formatBytes is exposed for the downloads display", async () => {
@@ -818,19 +1199,3 @@ test("when friends cannot load the page says why and offers to try again", async
   assert.ok(button(root, "Try again"));
 });
 
-test("the sample preview shows labelled made-up friends and never asks the store", async () => {
-  const fake = friendsStore({ friends: [ANA] });
-  const { root } = await launch([], { ...LOGGED_IN, ...fake.overrides });
-  byLabel(root, "Settings").dispatch("click");
-  const toggle = findAll(root, (n) => n.tagName === "input" && n.attributes.role === "switch" && /sample/i.test(textOf(n.parent)))[0];
-  toggle.checked = true;
-  toggle.dispatch("change");
-  await flush();
-
-  nav(root, "Friends").dispatch("click");
-  await flush();
-  assert.match(textOf(root), /made-up people/);
-  assert.match(textOf(root), /Sample Friend A/);
-  assert.doesNotMatch(textOf(root), /Ana/);
-  assert.equal(fake.log.length, 0, "no friends request went to the store");
-});

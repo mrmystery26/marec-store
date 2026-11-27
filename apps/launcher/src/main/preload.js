@@ -20,9 +20,27 @@ contextBridge.exposeInMainWorld("marec", {
   games: (query) => call("catalog:games", query),
   game: (slug) => call("catalog:game", slug),
   addToLibrary: (gameId) => call("library:add", gameId),
-  studios: () => call("developer:studios"),
-  createStudio: (name) => call("developer:createStudio", name),
+  providers: () => call("auth:providers"),
+  googleSignIn: () => call("auth:googleStart"),
+  googleCancel: () => call("auth:googleCancel"),
+  sendEmailCode: () => call("auth:sendEmailCode"),
+  verifyEmail: (code) => call("auth:verifyEmail", code),
+  developerAccount: () => call("developer:account"),
+  registerDeveloper: (studioName, termsVersion) => call("developer:register", studioName, termsVersion),
   studioGames: (studioId) => call("developer:games", studioId),
+  createGame: (studioId, title) => call("developer:createGame", studioId, title),
+  developerGame: (gameId) => call("developer:game", gameId),
+  updateGame: (gameId, changes) => call("developer:updateGame", gameId, changes),
+  submitGame: (gameId) => call("developer:submitGame", gameId),
+  builds: (gameId) => call("developer:builds", gameId),
+  pickBuildFolder: () => call("developer:pickBuildFolder"),
+  uploadBuild: (options) => call("developer:uploadBuild", options),
+  cancelUpload: () => call("developer:cancelUpload"),
+  downloadSdkConfig: (gameId) => call("developer:downloadSdkConfig", gameId),
+  adminStudios: (status) => call("admin:studios", status),
+  verifyStudio: (studioId) => call("admin:verifyStudio", studioId),
+  adminGames: (status) => call("admin:games", status),
+  transitionGame: (gameId, action, reason) => call("admin:transition", gameId, action, reason),
   friends: () => call("friends:list"),
   friendRequests: () => call("friends:requests"),
   friendCode: () => call("friends:code"),
@@ -34,6 +52,16 @@ contextBridge.exposeInMainWorld("marec", {
   removeFriend: (userId) => call("friends:remove", userId),
   saveSettings: (settings) => call("settings:save", settings),
   pickFolder: () => call("settings:pickFolder"),
+  onAuthEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("auth:event", listener);
+    return () => ipcRenderer.removeListener("auth:event", listener);
+  },
+  onUploadProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("upload:progress", listener);
+    return () => ipcRenderer.removeListener("upload:progress", listener);
+  },
   onInstallProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("install:progress", listener);

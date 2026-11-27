@@ -26,6 +26,21 @@ final class Hosts {
         return lower.startsWith("https://") || lower.startsWith("http://") || lower.startsWith("mailto:");
     }
 
+    /** The address the store sends the browser to after Google: marecstore://auth, with an optional query. */
+    static boolean isSignInLink(String url) {
+        if (url == null) {
+            return false;
+        }
+        String prefix = "marecstore://auth";
+        String lower = url.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith(prefix)) {
+            return false;
+        }
+        return lower.length() == prefix.length()
+                || lower.charAt(prefix.length()) == '?'
+                || lower.charAt(prefix.length()) == '/';
+    }
+
     static boolean isSha256(String value) {
         return value != null && SHA256.matcher(value).matches();
     }

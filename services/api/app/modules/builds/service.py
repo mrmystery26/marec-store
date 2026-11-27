@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import utcnow
 from app.core.errors import ApiError
 from app.core.signing import Signer
@@ -76,6 +77,14 @@ def create_build(
         raise ApiError(
             403, "STUDIO_NOT_VERIFIED", "Your studio must be verified before uploading."
         )
+    if game.release_kind == "demo":
+        limit = get_settings().demo_max_build_mb * 1024 * 1024
+        if sum(item.size_bytes for item in body.files) > limit:
+            raise ApiError(
+                422,
+                "DEMO_TOO_LARGE",
+                f"A demo can be at most {get_settings().demo_max_build_mb} MB.",
+            )
     active = db.scalar(
         select(func.count(GameBuild.id)).where(
             GameBuild.game_id == game.id,

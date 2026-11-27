@@ -13,7 +13,6 @@
       actions: [
         button({ label: "Try again", icon: "refresh", kind: "primary", onclick: () => { ctx.invalidate(retryPrefix); ctx.rerender(); } }),
         button({ label: "Server settings", onclick: () => ctx.navigate("settings") }),
-        ctx.data.mode() === "live" ? button({ label: "Preview with sample games", onclick: () => ctx.setSample(true) }) : null,
       ],
     }));
   }
@@ -36,7 +35,7 @@
       const owned = ctx.libraryItem(g.id);
       const actions = [button({ label: "View game", kind: "primary", onclick: () => ctx.openGame(g) })];
       if (!owned && g.isFree && !g.upcoming) {
-        actions.push(button({ label: g.sample ? "Free sample game" : "Get for free", disabled: g.sample, onclick: () => ctx.actions.acquire(g) }));
+        actions.push(button({ label: g.isDemo ? "Get the free demo" : "Get for free", onclick: () => ctx.actions.acquire(g) }));
       }
       frame.replaceChildren(
         c.artwork(g, { kind: "hero", caption: true }),
@@ -75,8 +74,7 @@
 
   function home(ctx) {
     const { h, c, button } = ctx;
-    const mode = ctx.data.mode();
-    const res = ctx.resource(`home:${mode}`, () => ctx.data.home());
+    const res = ctx.resource("home", () => ctx.data.home());
     if (res.status === "loading") {
       return h("div", { class: "page home", "aria-busy": "true" },
         h("div", { class: "hero skeleton" }), h("div", { class: "card-grid" }, c.skeletonCards(6)));
@@ -87,12 +85,12 @@
     if (!d.featured.length) {
       return h("div", { class: "page" }, c.emptyState({
         icon: "store", title: "The store has no games yet",
-        body: "Games appear here once studios publish them. You can preview the layout with sample games in the meantime.",
-        actions: [button({ label: "Preview with sample games", kind: "primary", onclick: () => ctx.setSample(true) })],
+        body: "Games appear here once developers publish them. Are you making a game? Create a developer account and upload a free demo.",
+        actions: [button({ label: "Publish a demo", kind: "primary", onclick: () => ctx.navigate("publisher") })],
       }));
     }
 
-    const categories = ctx.resource(`categories:${mode}`, () => ctx.data.categories());
+    const categories = ctx.resource("categories", () => ctx.data.categories());
     const page = h("div", { class: "page home" }, hero(ctx, d.featured));
     if (d.trending.length) page.append(c.shelf({ title: "Trending now", subtitle: "What players are opening most.", items: d.trending }));
     if (d.offers.length) page.append(c.shelf({ title: "Special offers", subtitle: "Discounted for a limited time.", items: d.offers }));
@@ -105,9 +103,6 @@
           h("button", { type: "button", class: "chip", onclick: () => ctx.browse({ category: cat.slug }) }, cat.name)))));
     }
     if (d.discover) page.append(discover(ctx, d));
-    if (mode === "live") {
-      page.append(h("p", { class: "page-note" }, "Trending games, special offers and upcoming releases show up here as soon as the store provides them."));
-    }
     return page;
   }
 

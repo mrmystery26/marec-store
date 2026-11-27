@@ -5,6 +5,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import utcnow
 from app.core.errors import ApiError
 from app.core.slugs import slugify, unique_slug
@@ -96,6 +97,7 @@ def to_card(game: Game, studio: Studio, categories: list) -> schemas.GameCard:
         price_minor=game.price_minor,
         currency=game.currency,
         is_free=game.price_minor == 0,
+        release_kind=game.release_kind,
         age_rating=game.age_rating,
         studio=schemas.StudioBrief(name=studio.name, slug=studio.slug),
         categories=categories,
@@ -118,6 +120,7 @@ def to_full(db: Session, game: Game, studio: Studio) -> schemas.GameFull:
         price_minor=game.price_minor,
         currency=game.currency,
         is_free=game.price_minor == 0,
+        release_kind=game.release_kind,
         age_rating=game.age_rating,
         protection_level=game.protection_level,
         offline_days=game.offline_days,
@@ -272,9 +275,27 @@ def create_category(
 def create_game(
     db: Session, studio: Studio, title: str, actor_id: uuid.UUID, ctx: dict
 ) -> Game:
+    settings = get_settings()
     game = Game(
         id=uuid.uuid4(), studio_id=studio.id, title=title, slug=unique_slug(db, Game, title)
     )
+    if settings.demo_only:
+        # Only free demos for now: the game is a demo from the start and its price is fixed at 0.
+        counted = db.scalar(
+            select(func.count(Game.id)).where(
+                Game.studio_id == studio.id, Game.status != GameStatus.REMOVED.value
+            )
+        )
+        if (counted or 0) >= settings.demo_max_games_per_studio:
+            raise ApiError(
+                409,
+                "DEMO_LIMIT",
+                f"A studio can have at most {settings.demo_max_games_per_studio} demos for now.",
+            )
+        game.release_kind = "demo"
+        game.price_minor = 0
+    else:
+        game.release_kind = "full"
     db.add(game)
     audit.record(
         db,
@@ -305,6 +326,8 @@ def update_game(
         raise ApiError(403, "FORBIDDEN", "Your studio role cannot edit game content.")
     if keys & PRICE_FIELDS and role not in PRICE_ROLES:
         raise ApiError(403, "FORBIDDEN", "Your studio role cannot change the price.")
+    if game.release_kind == "demo" and changes.get("price_minor", 0) != 0:
+        raise ApiError(422, "DEMO_MUST_BE_FREE", "Demos are free. The price must be 0.")
 
     after: dict = {"fields": sorted(keys)}
     if "price_minor" in changes and changes["price_minor"] != game.price_minor:

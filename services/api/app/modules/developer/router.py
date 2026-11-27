@@ -1,14 +1,26 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.email import EmailSender, get_email_sender, studio_pending_email
 from app.core.errors import ApiError
+from app.core.launch_signing import get_launch_signer
 from app.modules.audit import service as audit
 from app.modules.auth.deps import AuthContext, get_auth_context
 from app.modules.catalog import schemas, service
-from app.modules.developer.schemas import StudioCreate, StudioOut
+from app.modules.developer import sdk_config
+from app.modules.developer import service as developer
+from app.modules.developer.schemas import (
+    DeveloperAccountOut,
+    DeveloperLimits,
+    DeveloperRegister,
+    StudioCreate,
+    StudioOut,
+)
 from app.modules.studios import service as studios
 from app.modules.studios.models import Studio, StudioRole
 
@@ -27,6 +39,49 @@ def _game_for_member(db: Session, game_id: uuid.UUID, user_id: uuid.UUID) -> tup
     return service.game_for_member(db, game_id, user_id)
 
 
+@router.get("/account", response_model=DeveloperAccountOut)
+def developer_account(
+    ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)
+) -> DeveloperAccountOut:
+    """Where the person stands: can they register as a developer, and what are the limits?"""
+    profile = developer.get_profile(db, ctx.user.id)
+    mine = studios.list_user_studios(db, ctx.user.id) if profile else []
+    return DeveloperAccountOut(
+        is_developer=profile is not None,
+        email_verified=ctx.user.email_verified_at is not None,
+        terms_version=developer.TERMS_VERSION,
+        limits=DeveloperLimits(**developer.limits()),
+        studios=[_studio_out(studio, role) for studio, role in mine],
+    )
+
+
+@router.post("/account", status_code=201, response_model=StudioOut)
+def register_developer(
+    body: DeveloperRegister,
+    request: Request,
+    background: BackgroundTasks,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    sender: EmailSender = Depends(get_email_sender),
+) -> StudioOut:
+    """Creates the developer account and the first studio. The studio stays pending until MAREC
+    verifies it, and nothing can be uploaded before then."""
+    studio = developer.register(
+        db,
+        ctx.user,
+        body.studio_name,
+        body.accept_terms,
+        body.terms_version,
+        audit.context_from_request(request),
+    )
+    notify = get_settings().admin_notify_email
+    if notify:
+        background.add_task(
+            sender.send, studio_pending_email(notify, studio.name, ctx.user.display_name)
+        )
+    return _studio_out(studio, StudioRole.OWNER.value)
+
+
 @router.post("/studios", status_code=201, response_model=StudioOut)
 def create_studio(
     body: StudioCreate,
@@ -34,9 +89,8 @@ def create_studio(
     ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ) -> StudioOut:
-    studio = studios.create_studio(
-        db, ctx.user.id, body.name, audit.context_from_request(request)
-    )
+    developer.require_developer(db, ctx.user.id)
+    studio = studios.create_studio(db, ctx.user.id, body.name, audit.context_from_request(request))
     return _studio_out(studio, StudioRole.OWNER.value)
 
 
@@ -97,9 +151,7 @@ def update_game(
 ) -> schemas.GameFull:
     game, studio, role = _game_for_member(db, game_id, ctx.user.id)
     changes = body.model_dump(exclude_unset=True)
-    service.update_game(
-        db, game, role, changes, ctx.user.id, audit.context_from_request(request)
-    )
+    service.update_game(db, game, role, changes, ctx.user.id, audit.context_from_request(request))
     return service.to_full(db, game, studio)
 
 
@@ -115,3 +167,18 @@ def submit_game(
         raise ApiError(403, "FORBIDDEN", "Only studio owners and managers can submit.")
     service.submit_game(db, game, studio, ctx.user.id, audit.context_from_request(request))
     return service.to_full(db, game, studio)
+
+
+@router.get("/games/{game_id}/sdk-config", response_class=PlainTextResponse)
+def download_sdk_config(
+    game_id: uuid.UUID,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
+    """marec_config.gd for the MAREC SDK, already filled in for this game: the game's id, this
+    store's address and the launch public key. Replaces the file in addons/marec_sdk."""
+    game, _, _ = _game_for_member(db, game_id, ctx.user.id)
+    base = get_settings().public_api_base_url.rstrip("/")
+    text = sdk_config.render(str(game.id), base, get_launch_signer().public_pem)
+    disposition = 'attachment; filename="marec_config.gd"'
+    return PlainTextResponse(text, headers={"Content-Disposition": disposition})

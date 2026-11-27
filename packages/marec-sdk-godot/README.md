@@ -21,11 +21,10 @@ multiplayer, leaderboards) so a cracked copy cannot use it.
 1. Copy the `addons/marec_sdk` folder into your project's `addons` folder.
 2. **Project > Project Settings > Plugins:** enable **MAREC SDK**. This adds the `MarecSDK`
    autoload.
-3. Open `addons/marec_sdk/marec_config.gd` and fill in:
-   - `GAME_ID`: your game's id in the MAREC store.
-   - `API_BASE`: the store's API address.
-   - `PUBLIC_KEY_PEM`: the `launch` public key from `GET <API_BASE>/v1/launch/public-keys` (the
-     entry with `"use": "launch"`). It is a public key, so it is safe inside the game.
+3. Replace `addons/marec_sdk/marec_config.gd` with the filled-in one for your game. In the MAREC
+   Store launcher open **Publisher portal**, pick your game and press **Download SDK config**. The
+   file already holds your game's id, the store's API address and the launch public key (a public
+   key, so it is safe inside the game). Until you do this the SDK refuses to run (`BAD_CONFIG`).
 4. At the start of your first scene, wait for the check:
 
    ```gdscript
@@ -35,7 +34,8 @@ multiplayer, leaderboards) so a cracked copy cannot use it.
        # ...start your game
    ```
 5. Export as usual (Windows, x86_64). The config is a script, so Godot always exports it.
-6. Upload the export with `tools/upload-build` and install it through the launcher.
+6. Zip nothing: upload the exported folder from the launcher's Publisher portal (**Builds > Upload
+   a build**) and install it through the launcher.
 
 See `example/main.gd` for the smallest possible use.
 
@@ -76,7 +76,7 @@ See `example/main.gd` for the smallest possible use.
 | `NOT_OWNED`, `BUILD_UNAVAILABLE`, `GAME_UNAVAILABLE`, `TOKEN_REVOKED` | The store refused (shown with a clear message). |
 | `NETWORK_ERROR` | The store could not be reached to confirm the launch. |
 | `LEASE_EXPIRED`, `CLOCK_ROLLBACK` | Offline pass ended, or the PC date looks wrong. |
-| `BAD_CONFIG` | `marec_config.gd` is not filled in, or the public key is not valid. |
+| `BAD_CONFIG` | `marec_config.gd` is still the empty template (download yours from the Publisher portal), or the public key is not valid. |
 
 Connect to `MarecSDK.denied` or `MarecSDK.authorized` if you want to react yourself. Set
 `QUIT_ON_DENIED = false` to handle the message in your own screen.

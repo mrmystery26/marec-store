@@ -9,6 +9,7 @@ from tests.helpers import (
     code,
     create_account,
     make_category,
+    make_developer,
     make_game,
     make_studio,
 )
@@ -127,6 +128,7 @@ def test_future_release_dates_are_scheduled_then_released(client, db_session):
 
 def test_studio_verification_and_suspension(client, db_session):
     owner, owner_tokens = create_account(client, db_session, "owner@example.com")
+    make_developer(db_session, owner)
     _, store_admin = create_account(client, db_session, "store@example.com", [Role.STORE_ADMIN])
     _, mod = create_account(client, db_session, "mod@example.com", [Role.GAME_MODERATOR])
     studio_id = client.post(

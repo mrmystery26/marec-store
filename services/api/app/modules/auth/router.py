@@ -3,25 +3,32 @@ import uuid
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.email import EmailSender, get_email_sender
 from app.modules.audit import service as audit
-from app.modules.auth import service
+from app.modules.auth import service, verification
+from app.modules.rbac import service as rbac
 from app.modules.auth.deps import AuthContext, get_auth_context
 from app.modules.auth.models import User
 from app.modules.auth.schemas import (
     LoginRequest,
+    ProvidersOut,
     RefreshRequest,
     RegisterRequest,
+    SendCodeResponse,
     SessionOut,
     TokenResponse,
     UserOut,
+    VerifyEmailRequest,
 )
 
 router = APIRouter(tags=["auth"])
 
 
-def _to_user_out(user: User) -> UserOut:
+def _to_user_out(user: User, roles: list[str] | None = None) -> UserOut:
     return UserOut(
+        roles=roles or [],
         id=user.id,
         email=user.email,
         display_name=user.display_name,
@@ -74,8 +81,9 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(ctx: AuthContext = Depends(get_auth_context)) -> UserOut:
-    return _to_user_out(ctx.user)
+def me(ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)) -> UserOut:
+    roles = [role.value for role in rbac.get_roles(db, ctx.user.id)]
+    return _to_user_out(ctx.user, roles)
 
 
 @router.get("/me/sessions", response_model=list[SessionOut])
@@ -103,3 +111,33 @@ def revoke_my_session(
 ) -> Response:
     service.revoke_session(db, ctx.user.id, session_id)
     return Response(status_code=204)
+
+
+@router.get("/auth/providers", response_model=ProvidersOut)
+def providers() -> ProvidersOut:
+    """Which sign-in options this server has set up, so the app only shows working buttons."""
+    settings = get_settings()
+    return ProvidersOut(google=settings.google_enabled, email_codes=settings.email_enabled)
+
+
+@router.post("/auth/email/send-code", response_model=SendCodeResponse)
+def send_email_code(
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    sender: EmailSender = Depends(get_email_sender),
+) -> SendCodeResponse:
+    minutes = verification.send_code(db, ctx.user, sender)
+    return SendCodeResponse(expires_in_minutes=minutes)
+
+
+@router.post("/auth/email/verify", response_model=UserOut)
+def verify_email(
+    body: VerifyEmailRequest,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    user = verification.confirm_code(
+        db, ctx.user, body.code, **audit.context_from_request(request)
+    )
+    return _to_user_out(user, [role.value for role in rbac.get_roles(db, user.id)])

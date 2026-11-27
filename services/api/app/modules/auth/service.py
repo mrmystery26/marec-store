@@ -20,6 +20,8 @@ from app.core.security import (
 )
 from app.modules.audit import service as audit
 from app.modules.auth.models import User, UserSession
+from app.modules.rbac import service as rbac
+from app.modules.rbac.permissions import Role
 
 INVALID_CREDENTIALS = ApiError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
 
@@ -75,9 +77,29 @@ def register_user(
     return user
 
 
+def _grant_bootstrap_admin(db: Session, user: User) -> None:
+    """The site owner's own verified address becomes super administrator (see
+    BOOTSTRAP_ADMIN_EMAILS). Only a verified address counts, so nobody can claim it by
+    registering it first. Caller commits."""
+    if user.email_verified_at is None or user.status != "active":
+        return
+    if user.email not in get_settings().bootstrap_admin_list:
+        return
+    if rbac.grant_role(db, user.id, Role.SUPER_ADMIN, granted_by=None):
+        audit.record(
+            db,
+            action="role.granted",
+            entity_type="user",
+            entity_id=str(user.id),
+            actor_roles="bootstrap",
+            after={"role": Role.SUPER_ADMIN.value},
+        )
+
+
 def _start_session(db: Session, user: User, ip: str | None, user_agent: str | None) -> TokenPair:
     settings = get_settings()
     now = utcnow()
+    _grant_bootstrap_admin(db, user)
     refresh_token = new_refresh_token()
     session = UserSession(
         id=uuid.uuid4(),
@@ -102,8 +124,10 @@ def login(
     now = utcnow()
     user = db.scalar(select(User).where(User.email == normalize_email(email)))
 
-    if user is None:
-        verify_password(password, DUMMY_HASH)  # keep timing similar to a real check
+    if user is None or user.password_hash is None:
+        # Unknown address, or an account that only uses Google (it has no password to check).
+        # Both answer the same way and take similar time, so neither can be told apart.
+        verify_password(password, DUMMY_HASH)
         raise INVALID_CREDENTIALS
 
     if user.locked_until is not None and user.locked_until > now:

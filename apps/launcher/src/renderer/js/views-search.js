@@ -10,7 +10,7 @@
 
     function paint() {
       if (s.status === "idle") {
-        const cats = ctx.resource(`categories:${ctx.data.mode()}`, () => ctx.data.categories());
+        const cats = ctx.resource("categories", () => ctx.data.categories());
         results.replaceChildren(
           h("p", { class: "muted pad-sm" }, "Search by game title, studio or description."),
           cats.status === "ready" && cats.data.length

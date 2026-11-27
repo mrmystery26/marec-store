@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.modules.admin.review import router as admin_review_router
 from app.modules.admin.router import router as admin_router
+from app.modules.auth.google_router import router as google_router
 from app.modules.auth.router import router as auth_router
 from app.modules.builds.router import router as builds_router
 from app.modules.builds.storage_router import router as storage_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
     app.include_router(health_router, prefix="/v1")
     app.include_router(auth_router, prefix="/v1")
+    app.include_router(google_router, prefix="/v1")
     app.include_router(admin_router, prefix="/v1")
     app.include_router(admin_review_router, prefix="/v1")
     app.include_router(store_router, prefix="/v1")

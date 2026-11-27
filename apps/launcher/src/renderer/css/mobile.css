@@ -91,5 +91,4 @@ body { overscroll-behavior: none; }
   .modal-backdrop { padding: 12px; align-items: end; }
   .modal-actions { flex-wrap: wrap; }
   .toast { left: 12px; right: 12px; bottom: 76px; max-width: none; }
-  .banner.on { padding: 8px 12px; font-size: 12px; }
 }

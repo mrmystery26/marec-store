@@ -26,7 +26,7 @@
 .badge.discount { background: var(--accent); color: #fff; }
 .badge.owned { background: var(--owned); color: #07170f; }
 .badge.soon { background: var(--warn); color: #241a05; }
-.badge.sample { background: rgba(10, 11, 13, 0.82); color: var(--warn); border: 1px solid rgba(224, 166, 58, 0.5); }
+.badge.demo { background: rgba(10, 11, 13, 0.82); color: var(--warn); border: 1px solid rgba(224, 166, 58, 0.5); }
 .tag { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--raised-2); color: var(--muted); font-size: 11px; font-weight: 600; font-family: var(--font-body); }
 .status { font-size: 12px; }
 .status.ok { color: var(--owned); }
@@ -153,3 +153,11 @@ select { width: auto; min-width: 180px; padding-right: 8px; }
 
 .game-card .price { flex-wrap: wrap; row-gap: 2px; }
 .price-old, .price-now { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- publisher portal and review */
+.steps { margin: 12px 0 20px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.rules { margin: 8px 0 14px; padding-left: 20px; color: var(--text); font-size: 13px; line-height: 1.6; }
+.upload .bar { height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
+.upload .bar > div { height: 100%; width: 0; background: var(--accent); }
+.review-card { padding-bottom: 8px; }
+.publisher textarea, .review textarea, .upload textarea { width: 100%; min-height: 72px; resize: vertical; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }

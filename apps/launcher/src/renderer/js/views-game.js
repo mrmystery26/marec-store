@@ -93,7 +93,7 @@
     if (!item && !ctx.platform.canRun(game.platforms)) {
       parts.push(h("p", { class: "muted small" }, `This game is for ${ctx.platform.names(game.platforms).join(" and ")}. You can still add it to your library here.`));
     }
-    if (game.sample) parts.push(c.notice("info", "Sample game. It cannot be bought or installed."));
+    if (game.isDemo) parts.push(c.notice("info", "This is a free demo. A demo is a short sample of a game from its developer."));
     const wished = ctx.local.inWishlist(game.id);
     parts.push(button({ label: wished ? "On your wishlist" : "Add to wishlist", icon: wished ? "heart-fill" : "heart", kind: `wide ${wished ? "on" : ""}`.trim(), "aria-pressed": String(wished), onclick: () => ctx.actions.toggleWish(game) }));
     return h("aside", { class: "buy-panel" }, parts);
@@ -118,8 +118,7 @@
   function game(ctx) {
     const { h, c, icon, button } = ctx;
     const slug = ctx.state.route.params.slug;
-    const mode = ctx.data.mode();
-    const res = ctx.resource(`game:${mode}:${slug}`, () => ctx.data.game(slug));
+    const res = ctx.resource(`game:${slug}`, () => ctx.data.game(slug));
     const back = button({ label: "Back to store", icon: "chevron-left", kind: "ghost", onclick: () => ctx.navigate("store") });
     if (res.status === "loading") return h("div", { class: "page game", "aria-busy": "true" }, h("div", { class: "game-head skeleton" }), h("div", { class: "bone wide" }));
     if (res.status === "error") {

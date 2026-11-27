@@ -32,6 +32,31 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr | None = None
     s3_region: str = "auto"
 
+    # Sign in with Google. Create an OAuth client of type "Web application" in Google Cloud and add
+    # {PUBLIC_API_BASE_URL}/v1/auth/google/callback as an authorized redirect URI.
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
+    # Where the browser sends the player back to the app after Google. Never taken from a request.
+    app_redirect_uri: str = "marecstore://auth"
+    login_ticket_seconds: int = 120
+
+    # Email through Resend (https://resend.com). Without a key no email is sent.
+    resend_api_key: SecretStr | None = None
+    # The sender must be on a domain verified in Resend, e.g. "MAREC Store <no-reply@example.com>".
+    email_from: str | None = None
+    # Comma-separated emails that become super administrators the first time they sign in with a
+    # verified address. This exists because free hosting has no shell to run app.cli in.
+    bootstrap_admin_emails: str = ""
+    # Where "a new developer is waiting for verification" notices go (optional).
+    admin_notify_email: str | None = None
+    email_code_minutes: int = 15
+    email_code_max_attempts: int = 5
+
+    # Demo phase: developers may only upload free demos. Turn off when full releases open.
+    demo_only: bool = True
+    demo_max_build_mb: int = 1024
+    demo_max_games_per_studio: int = 5
+
     # Ed25519 seed (base64, 32 bytes) used to sign build manifests.
     manifest_signing_key: SecretStr | None = None
 
@@ -40,6 +65,21 @@ class Settings(BaseSettings):
     launch_signing_key: SecretStr | None = None
     launch_token_seconds: int = 120
     max_devices_per_account: int = 5
+
+    @field_validator(
+        "google_client_id",
+        "google_client_secret",
+        "resend_api_key",
+        "email_from",
+        "admin_notify_email",
+        mode="before",
+    )
+    @classmethod
+    def _blank_means_unset(cls, value):
+        # Hosting dashboards often keep an empty variable instead of removing it.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("database_url")
     @classmethod
@@ -51,6 +91,22 @@ class Settings(BaseSettings):
             if value.startswith(prefix):
                 return "postgresql+psycopg://" + value[len(prefix):]
         return value
+
+    @property
+    def bootstrap_admin_list(self) -> list[str]:
+        return [e.strip().lower() for e in self.bootstrap_admin_emails.split(",") if e.strip()]
+
+    @property
+    def google_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def email_enabled(self) -> bool:
+        return bool(self.resend_api_key and self.email_from)
+
+    @property
+    def google_redirect_uri(self) -> str:
+        return self.public_api_base_url.rstrip("/") + "/v1/auth/google/callback"
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -96,6 +152,10 @@ class Settings(BaseSettings):
                 pem = b""
             if not pem.startswith(b"-----BEGIN"):
                 raise ValueError("LAUNCH_SIGNING_KEY must be a base64-encoded PEM private key.")
+        if (self.google_client_id is None) != (self.google_client_secret is None):
+            raise ValueError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together.")
+        if self.resend_api_key is not None and not self.email_from:
+            raise ValueError("EMAIL_FROM is required when RESEND_API_KEY is set.")
         if self.environment in ("staging", "production"):
             if self.launch_signing_key is None:
                 raise ValueError("LAUNCH_SIGNING_KEY is required in staging and production.")

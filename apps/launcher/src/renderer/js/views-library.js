@@ -225,7 +225,7 @@
             return h("div", { class: "wish-row" },
               h("div", { class: "row-thumb" }, c.artwork(game)),
               h("div", { class: "dl-main" },
-                h("div", { class: "card-title" }, w.title, w.sample ? c.badge("sample", "Sample") : null, owned ? c.badge("owned", "In library") : null),
+                h("div", { class: "card-title" }, w.title, owned ? c.badge("owned", "In library") : null),
                 h("div", { class: "card-genre" }, w.studio)),
               h("div", { class: "wish-price" }, w.price ? c.price(game) : null),
               h("div", { class: "row" },
@@ -247,24 +247,6 @@
       return { error: "That does not look like a friend code. Codes look like ABCD-2345." };
     }
     return { code: `${code.slice(0, 4)}-${code.slice(4)}` };
-  }
-
-  /** The made-up people shown only while the sample-store preview is on. Nothing here is connected. */
-  function friendsPreview(ctx) {
-    const { h, c } = ctx;
-    const tabs = [["all", "All friends"], ["online", "Online"], ["requests", "Requests"]];
-    const tab = tabs.some(([value]) => value === ctx.state.friendsTab) ? ctx.state.friendsTab : "all";
-    const list = ctx.data.sampleFriends().filter((f) => tab === "all" || (tab === "online" && f.status === "Online"));
-    return h("div", { class: "page friends" },
-      h("header", { class: "page-head" }, h("h1", {}, "Friends"), h("p", { class: "muted" }, "This is how the page looks with made-up people.")),
-      c.notice("info", "You are previewing the store with sample data, so these friends are not real. Turn the preview off in Settings to use your real friends."),
-      h("div", { class: "tabs", role: "tablist" }, tabs.map(([value, label]) =>
-        h("button", { type: "button", role: "tab", class: tab === value ? "on" : "", "aria-selected": String(tab === value), onclick: () => { ctx.state.friendsTab = value; ctx.rerender(); } }, label))),
-      list.length && tab !== "requests"
-        ? h("div", { class: "friend-list" }, list.map((f) =>
-            h("div", { class: "friend-row" }, c.avatar(f.name), h("div", { class: "dl-main" }, h("div", { class: "card-title" }, f.name), h("div", { class: "muted small" }, f.playing ? `Playing ${f.playing}` : f.status)),
-              h("span", { class: `status ${f.status === "Online" ? "ok" : "off"}` }, f.status))))
-        : c.emptyState({ icon: "users", title: tab === "requests" ? "No friend requests" : "No friends online", body: "The preview has no real people, so there is nothing here." }));
   }
 
   function friendsTab(ctx, data) {
@@ -330,7 +312,6 @@
   const FRIEND_TABS = [["all", "Friends"], ["requests", "Requests"], ["add", "Add friend"]];
 
   function friends(ctx) {
-    if (ctx.data.mode() === "sample") return friendsPreview(ctx);
     const { h, c, button } = ctx;
     const ui = ctx.state.friendsUI;
     const res = ctx.resource("friends:live", () => ctx.data.social());

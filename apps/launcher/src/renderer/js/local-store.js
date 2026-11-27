@@ -11,7 +11,6 @@
     notifyUpdates: true,
     reduceMotion: false,
     region: "MW", // where the player is; used when games are limited to some countries
-    sampleStore: false, // preview the store with sample games
   };
   const KEYS = {
     prefs: "marec.prefs.v1",
@@ -75,7 +74,7 @@
         if (wishlist.some((item) => item.id === game.id)) return;
         const snapshot = {
           id: game.id, slug: game.slug, title: game.title,
-          studio: game.studio ? game.studio.name : "", sample: Boolean(game.sample),
+          studio: game.studio ? game.studio.name : "",
           price: game.price || null, isFree: Boolean(game.isFree), addedAt: new Date(now()).toISOString(),
         };
         wishlist = [snapshot, ...wishlist].slice(0, LIMITS.wishlist);

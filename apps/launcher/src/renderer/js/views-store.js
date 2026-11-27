@@ -27,9 +27,8 @@
   function store(ctx) {
     const { h, c, button } = ctx;
     const s = ctx.state.store;
-    const mode = ctx.data.mode();
     const caps = ctx.data.capabilities();
-    const key = JSON.stringify([mode, paramsOf(s)]);
+    const key = JSON.stringify(paramsOf(s));
 
     function fetchPage(offset) {
       const result = s.result;
@@ -57,7 +56,7 @@
       fetchPage(0);
     }
     const result = s.result;
-    const categories = ctx.resource(`categories:${mode}`, () => ctx.data.categories());
+    const categories = ctx.resource("categories", () => ctx.data.categories());
 
     const set = (patch) => { Object.assign(s, patch); ctx.rerender(); };
     const filtered = s.category || s.price !== "any" || s.release !== "any" || s.q;
@@ -81,7 +80,7 @@
       ariaLabel: "Sort by", value: s.sort, onchange: (value) => set({ sort: value }),
       options: [
         { value: "newest", label: "Newest" },
-        { value: "popular", label: caps.popularity ? "Popularity" : "Popularity (not available yet)", disabled: !caps.popularity },
+        ...(caps.popularity ? [{ value: "popular", label: "Popularity" }] : []),
         { value: "price_asc", label: "Price: low to high" },
         { value: "price_desc", label: "Price: high to low" },
         { value: "title", label: "Title A to Z" },

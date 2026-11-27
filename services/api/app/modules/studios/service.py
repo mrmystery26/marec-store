@@ -4,10 +4,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.db import utcnow
 from app.core.errors import ApiError
 from app.core.slugs import unique_slug
 from app.modules.audit import service as audit
-from app.modules.studios.models import Studio, StudioMembership, StudioRole
+from app.modules.studios.models import Studio, StudioMembership, StudioRole, StudioStatus
 
 MAX_OWNED_STUDIOS = 3
 
@@ -43,6 +44,34 @@ def create_studio(db: Session, user_id: uuid.UUID, name: str, ctx: dict) -> Stud
         db.rollback()
         raise ApiError(409, "SLUG_CONFLICT", "Please try again.") from None
     return studio
+
+
+def verify_studio(
+    db: Session,
+    studio: Studio,
+    *,
+    actor_user_id: uuid.UUID | None,
+    actor_roles: str,
+    ctx: dict | None = None,
+) -> None:
+    """Marks a studio verified and records it. Used by the admin API and the command line."""
+    if studio.status == StudioStatus.VERIFIED.value:
+        raise ApiError(409, "INVALID_STATE", "This studio is already verified.")
+    before = studio.status
+    studio.status = StudioStatus.VERIFIED.value
+    studio.verified_at = utcnow()
+    audit.record(
+        db,
+        action="studio.verified",
+        entity_type="studio",
+        entity_id=str(studio.id),
+        actor_user_id=actor_user_id,
+        actor_roles=actor_roles,
+        before={"status": before},
+        after={"status": studio.status},
+        **(ctx or {}),
+    )
+    db.commit()
 
 
 def list_user_studios(db: Session, user_id: uuid.UUID) -> list[tuple[Studio, str]]:
