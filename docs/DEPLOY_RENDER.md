@@ -30,6 +30,21 @@ the API refuses to start in production without them.
      `MAREC_API_BASE_URL` with the same address (no trailing slash). Then re-run **Build apps**
      under Actions. The new Windows and Android downloads will already point at your store.
 
+## The database (read this before real use)
+
+A **free Render database expires 30 days after it is created**, and Render deletes it (and everything
+in it) 14 days after that unless you upgrade it. That is fine for trying things out, but it would erase
+every account, studio and demo. Before you rely on the store, do one of these:
+
+- In Render, upgrade `marec-db` to a paid instance (the simplest), or
+- Use a PostgreSQL service from another provider that offers a lasting free or paid plan (Neon and
+  Supabase are two that people use), create a database there, and paste its connection address into
+  the API service's `DATABASE_URL` on Render (remove the link to `marec-db` in the blueprint). Check
+  that provider's current free terms yourself.
+
+Also back up: from any computer, `pg_dump "<your database address>" > backup.sql` (the address is on
+the database page). Game files live in Cloudflare R2, not in the database, so they are separate.
+
 ## Good to know
 
 - Free web services on Render go to sleep when idle, so the first request after a quiet period can

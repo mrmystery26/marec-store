@@ -105,7 +105,12 @@ nobody can claim yours by registering it with a password first.
 Turn on **Google 2-step verification** on that Google account. The store has no second factor of its
 own for staff yet, so your Google account is what protects the admin area.
 
-## 7. Deploy and point the apps at it
+## 7. The database: do not leave it on the free plan
+
+A free Render database is deleted about six weeks after it is created. Upgrade it, or move to an
+outside PostgreSQL, before real people sign up. Details in `DEPLOY_RENDER.md`.
+
+## 8. Deploy and point the apps at it
 
 1. Apply `render.yaml` as described in `DEPLOY_RENDER.md`. Render asks for the values above.
 2. In GitHub, **Settings, Secrets and variables, Actions, Variables**, set `MAREC_API_BASE_URL` to

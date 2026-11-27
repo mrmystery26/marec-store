@@ -4,6 +4,9 @@
 #
 # Every entry marked `sync: false` is a secret or an address that belongs to you. Render asks for
 # it when you apply the blueprint. None of them are stored in this repository.
+# WARNING: a free Render database EXPIRES 30 days after it is created and is deleted 14 days later,
+# with every account and demo in it. Fine for a trial; before real use either change `plan` to a paid
+# one, or use an outside PostgreSQL and set DATABASE_URL yourself (see docs/DEPLOY_RENDER.md).
 databases:
   - name: marec-db
     databaseName: marec
